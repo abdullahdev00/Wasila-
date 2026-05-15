@@ -1,20 +1,35 @@
+const { BaseAgent } = require('../adk');
+const providers = require('../data/providers.json');
+
 /**
  * Agent 3: Ranking Agent
- * Implements the 6-Factor Agentic Ranking Engine.
+ * Extends ADK BaseAgent.
  */
-class RankingAgent {
-  rank(providers, preference) {
-    return providers.map(p => {
+class RankingAgent extends BaseAgent {
+  constructor() {
+    super("Intelligent Ranking Agent");
+  }
+
+  async run(context) {
+    const { category, action } = context.state;
+    if (action === 'dispute' || action === 'book') return { rankingCompleted: false };
+
+    let candidates = providers.filter(p => !p.isBooked);
+    if (category) {
+      candidates = candidates.filter(p => p.category.toLowerCase().includes(category.toLowerCase()));
+    }
+
+    const ranked = candidates.map(p => {
       let score = 0;
-      score += p.rating * 10; // Factor 1: Rating
-      score += (p.verified ? 20 : 0); // Factor 2: Verification
-      score += (20 - Math.min(p.distanceKm, 20)); // Factor 3: Proximity
-      score += (p.experienceYears / 2); // Factor 4: Experience
-      score += (preference === 'sasta' ? (5000 - p.pricePerHour) / 100 : p.pricePerHour / 500); // Factor 5: Price
-      score += 10; // Factor 6: Availability
-      
+      score += p.rating * 10;
+      score += (p.verified ? 20 : 0);
+      score += (20 - Math.min(p.distanceKm, 20));
+      score += (p.experienceYears / 2);
+      score += 10;
       return { ...p, finalScore: score };
     }).sort((a, b) => b.finalScore - a.finalScore);
+
+    return { bestMatch: ranked[0], candidatesCount: ranked.length };
   }
 }
 
