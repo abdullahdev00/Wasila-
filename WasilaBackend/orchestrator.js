@@ -1,60 +1,48 @@
 const providersData = require('./data/providers.json');
 
-/**
- * Wasila AI Orchestrator
- * This is the 'Brain' that uses Antigravity reasoning to handle service requests.
- */
 class WasilaOrchestrator {
   constructor() {
     this.providers = providersData;
+    this.bookings = []; // Mock database for bookings
   }
 
   async processRequest(userQuery) {
     const traces = [];
-    traces.push({ step: "Analyzing Input", detail: `User Query: "${userQuery}"` });
+    const q = userQuery.toLowerCase();
+    
+    traces.push({ step: "Language Detection", detail: "Analyzing query for Urdu/English/Roman Urdu keywords." });
 
-    // 1. Extract Intent (Mocking NLP/Reasoning for Roman Urdu)
+    // 1. Enhanced Intent Extraction (Multilingual)
     const intent = this.extractIntent(userQuery);
     traces.push({ step: "Intent Extraction", detail: `Detected Category: ${intent.category || 'Any'}, Preference: ${intent.preference || 'None'}` });
 
-    // 2. Planning (Search Strategy)
-    traces.push({ step: "Planning", detail: `Searching database for ${intent.category} providers with ${intent.preference} criteria.` });
+    // 2. Handling "Booking" Action
+    if (intent.action === 'book') {
+      return this.handleBooking(intent, traces);
+    }
 
-    // 3. Tool Execution (Filtering Data)
-    let candidates = this.providers;
+    // 3. Planning & Retrieval
+    traces.push({ step: "Planning", detail: "Searching providers knowledge base." });
+    let candidates = this.providers.filter(p => !p.isBooked);
+    
     if (intent.category) {
       candidates = candidates.filter(p => p.category.toLowerCase().includes(intent.category.toLowerCase()));
     }
 
-    traces.push({ step: "Data Retrieval", detail: `Found ${candidates.length} potential providers.` });
-
-    // 4. Reasoning & Ranking (Agentic Decision Making)
-    traces.push({ step: "Reasoning", detail: "Ranking providers based on Rating, Price, and Verification status." });
-    
-    const rankedProviders = candidates.sort((a, b) => {
-      // Logic: Prioritize Verified, then high Rating, then lower Price if preference is 'cheap'
-      if (intent.preference === 'sasta' || intent.preference === 'cheap') {
-        return a.pricePerHour - b.pricePerHour;
-      }
-      if (a.verified !== b.verified) return b.verified ? 1 : -1;
+    // 4. Reasoning & Ranking
+    traces.push({ step: "Reasoning", detail: "Ranking by rating, price, and verification." });
+    const ranked = candidates.sort((a, b) => {
+      if (intent.preference === 'sasta') return a.pricePerHour - b.pricePerHour;
       return b.rating - a.rating;
     });
 
-    const bestMatch = rankedProviders[0];
-    
-    if (bestMatch) {
-      traces.push({ 
-        step: "Final Decision", 
-        detail: `Selected ${bestMatch.name} as the best match. He is ${bestMatch.verified ? 'Verified' : 'Unverified'} with a ${bestMatch.rating} rating.` 
-      });
-    } else {
-      traces.push({ step: "Final Decision", detail: "No suitable provider found for this request." });
-    }
+    const bestMatch = ranked[0];
 
     return {
       reply: this.generateResponse(bestMatch, intent),
       bestMatch: bestMatch,
-      traces: traces
+      traces: traces,
+      suggestion: bestMatch ? `Kya main ${bestMatch.name} ko book kar doon?` : "Kya main kisi aur area mein dhoondoon?"
     };
   }
 
@@ -62,28 +50,53 @@ class WasilaOrchestrator {
     const q = query.toLowerCase();
     let category = null;
     let preference = null;
+    let action = null;
 
-    if (q.includes('plumber')) category = 'Plumber';
-    if (q.includes('bijli') || q.includes('electrician')) category = 'Electrician';
-    if (q.includes('ac') || q.includes('mechanic')) category = 'AC Mechanic';
-    if (q.includes('tutor') || q.includes('parhana')) category = 'Maths Tutor';
+    // Multilingual Keywords (English, Urdu, Roman Urdu)
+    if (q.match(/plumber|nalka|pipe|پلمبر/)) category = 'Plumber';
+    if (q.match(/electrician|bijli|light|بجلی/)) category = 'Electrician';
+    if (q.match(/ac|mechanic|refrigerator|fridge|اے سی/)) category = 'AC Mechanic';
+    if (q.match(/tutor|teacher|maths|parhana|استاد/)) category = 'Maths Tutor';
 
-    if (q.includes('sasta') || q.includes('cheap') || q.includes('kam rate')) preference = 'sasta';
-    if (q.includes('best') || q.includes('accha') || q.includes('top')) preference = 'best';
+    if (q.match(/sasta|cheap|low price|kam rate|سستا/)) preference = 'sasta';
+    if (q.match(/best|top|accha|high quality|بہترین/)) preference = 'best';
 
-    return { category, preference };
+    if (q.match(/book|yes|haan|kar do|confirm|بکنگ/)) action = 'book';
+
+    return { category, preference, action };
+  }
+
+  handleBooking(intent, traces) {
+    traces.push({ step: "Action Simulation", detail: "Initiating booking process." });
+    
+    // In a real app, we'd look for the LAST mentioned provider in the session
+    // For simulation, we'll pick the top one if category is mentioned
+    const provider = this.providers.find(p => p.category === intent.category && !p.isBooked) || this.providers[0];
+
+    if (provider) {
+      provider.isBooked = true; // Mock update
+      traces.push({ step: "Action Success", detail: `Successfully booked ${provider.name}.` });
+      traces.push({ step: "Notification", detail: `[SIMULATION] SMS sent to ${provider.name}: New booking request from User.` });
+      
+      return {
+        reply: `Ji bilkul! Mainy ${provider.name} ki booking confirm kar di hai. Wo 2 ghanty mein aapke location par pohanch jayein gy.`,
+        actionTaken: "BOOKING_CONFIRMED",
+        provider: provider,
+        traces: traces
+      };
+    }
+
+    return {
+      reply: "Maazrat! Filhal koi provider available nahi hai. Kya main kuch dair baad check karoon?",
+      traces: traces
+    };
   }
 
   generateResponse(provider, intent) {
-    if (!provider) {
-      return "Maazrat! Mujhy aapki requirement ke mutabiq koi provider nahi mila. Kya main kisi aur category mein dhoondoon?";
-    }
-
-    if (intent.preference === 'sasta') {
-      return `Mujhy sab sy sasta option ${provider.name} mila hai jo ${provider.location} mein hain. Inka rate ${provider.pricePerHour} PKR hai. Kya main booking kar doon?`;
-    }
-
-    return `Mujhy behtareen match ${provider.name} mily hain jo ${provider.category} ke expert hain. Inki rating ${provider.rating} hai. Kya aap inhein book karna chahein gy?`;
+    if (!provider) return "Mujhy koi available provider nahi mila. Kya main kisi aur category mein dhoondoon?";
+    
+    const intro = intent.preference === 'sasta' ? "Sasta aur behtareen option" : "Sub sy behtareen option";
+    return `${intro} ${provider.name} hain. Inka rate ${provider.pricePerHour} PKR hai aur rating ${provider.rating} hai. Ye ${provider.location} mein hain. Kya main inhein book kar doon?`;
   }
 }
 
