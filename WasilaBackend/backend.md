@@ -29,9 +29,19 @@ This document records the development progress, architecture, and logic of the W
 - Created `bookings.json` to maintain persistent history.
 - Added **Notification Simulation** (Mock SMS/Alerts in traces).
 
-### 🏗️ Phase 5: Testing & Integration (In-Progress)
-- Verifying endpoints via manual testing and curl.
-- Next: Final push and partner integration.
+### ✅ Phase 5: Testing & Integration (Completed)
+- Verified `/api/chat` with Roman Urdu queries.
+- Verified Booking Action and persistent history.
+- Verified 6-Factor Ranking Engine scores.
+
+---
+
+## 🧪 Test Case Results
+| Case | Input | AI Result | Status |
+| :--- | :--- | :--- | :--- |
+| **Search** | "G-11 sasta plumber" | Selected Ahmed Raza (Score 136.8) | ✅ Pass |
+| **Booking** | "Confirm booking" | Booking recorded + SMS Simulated | ✅ Pass |
+| **History** | `GET /api/bookings` | Returns saved booking records | ✅ Pass |
 
 ---
 
