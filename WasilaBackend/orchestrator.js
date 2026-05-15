@@ -1,34 +1,48 @@
 const { SequentialAgent } = require('./adk');
 const parser = require('./agents/ParserAgent');
 const ranker = require('./agents/RankingAgent');
-const pricer = require('./agents/PricingAgent'); // I'll refactor this too
-const actor = require('./agents/ActionAgent');   // I'll refactor this too
+const booker = require('./agents/BookingAgent');
+const follower = require('./agents/FollowUpAgent');
 
 /**
- * Wasila Master Orchestrator (ADK Sequential Implementation)
+ * Wasila Master Orchestrator (Full ADK Sequential Implementation)
  */
 class WasilaOrchestrator {
   constructor() {
-    // Defining the Sequential Pipeline
-    this.brain = new SequentialAgent("Wasila Main Pipeline", [
+    // Defining the FULL Sequential Pipeline
+    this.brain = new SequentialAgent("Wasila End-to-End Pipeline", [
       parser,
       ranker,
-      // More agents can be added here
+      booker,
+      follower
     ]);
   }
 
   async processRequest(userQuery) {
-    // The ADK SequentialAgent handles the execution flow and shared state
+    // The ADK SequentialAgent handles the execution flow and shared state across ALL agents
     const resultContext = await this.brain.run(userQuery);
     
     const state = resultContext.state;
     const traces = resultContext.traces;
 
-    // Final Logic for Response Generation
+    // Intelligence: Handling Low Confidence from Parser
     if (state.confidence < 60) {
-      return { reply: "Mujhy sahi sy samajh nahi aaya. Kya aap apni requirement bata sakty hain?", traces };
+      return { 
+        reply: "Maazrat! Mujhy sahi sy samajh nahi aaya. Kya aap apni requirement bata sakty hain?", 
+        traces: traces 
+      };
     }
 
+    // Intelligence: Handling Successful Booking
+    if (state.bookingStatus === "SUCCESS") {
+      return {
+        reply: `Mubarak ho! ${state.bookingDetails.providerName} ki booking ho gayi hai. ${state.followUpMessage}`,
+        booking: state.bookingDetails,
+        traces: traces
+      };
+    }
+
+    // Intelligence: Handling Search Results
     if (state.bestMatch) {
       return {
         reply: `Mujhy ${state.bestMatch.name} mily hain jo ${state.bestMatch.category} ke expert hain. Kya main book kar doon?`,
@@ -37,7 +51,7 @@ class WasilaOrchestrator {
       };
     }
 
-    return { reply: "Maazrat, koi provider nahi mila.", traces };
+    return { reply: "Maazrat, koi provider available nahi mila.", traces: traces };
   }
 }
 
