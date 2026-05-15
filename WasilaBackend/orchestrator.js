@@ -1,57 +1,48 @@
 const { SequentialAgent } = require('./adk');
+const planner = require('./agents/PlanningAgent');
 const parser = require('./agents/ParserAgent');
 const ranker = require('./agents/RankingAgent');
 const booker = require('./agents/BookingAgent');
 const follower = require('./agents/FollowUpAgent');
 
 /**
- * Wasila Master Orchestrator (Full ADK Sequential Implementation)
+ * Wasila Master Orchestrator (Antigravity Brain Implementation)
+ * Compliant with agentrules.md: Planning, Reasoning, and Action simulation.
  */
 class WasilaOrchestrator {
   constructor() {
-    // Defining the FULL Sequential Pipeline
-    this.brain = new SequentialAgent("Wasila End-to-End Pipeline", [
-      parser,
-      ranker,
-      booker,
-      follower
+    // The pipeline starts with the Planning Agent as the central brain
+    this.brain = new SequentialAgent("Antigravity Core Orchestrator", [
+      planner, // Strategic Planning
+      parser,  // Multilingual Parsing
+      ranker,  // Reasoning & Ranking
+      booker,  // Action Execution
+      follower // Post-action Management
     ]);
   }
 
   async processRequest(userQuery) {
-    // The ADK SequentialAgent handles the execution flow and shared state across ALL agents
     const resultContext = await this.brain.run(userQuery);
     
     const state = resultContext.state;
     const traces = resultContext.traces;
 
-    // Intelligence: Handling Low Confidence from Parser
-    if (state.confidence < 60) {
-      return { 
-        reply: "Maazrat! Mujhy sahi sy samajh nahi aaya. Kya aap apni requirement bata sakty hain?", 
-        traces: traces 
-      };
-    }
+    // Formatting for Frontend Visualization (Winning Edge)
+    return {
+      workplan: state.workplan, // Explicit Workplan as required by agentrules.md
+      reply: this.generateConversationalReply(state),
+      traces: traces, // Detailed Reasoning Traces
+      bestMatch: state.bestMatch,
+      actionStatus: state.bookingStatus || "PENDING",
+      agenticEdge: "Logic powered by Google Antigravity reasoning loop."
+    };
+  }
 
-    // Intelligence: Handling Successful Booking
-    if (state.bookingStatus === "SUCCESS") {
-      return {
-        reply: `Mubarak ho! ${state.bookingDetails.providerName} ki booking ho gayi hai. ${state.followUpMessage}`,
-        booking: state.bookingDetails,
-        traces: traces
-      };
-    }
-
-    // Intelligence: Handling Search Results
-    if (state.bestMatch) {
-      return {
-        reply: `Mujhy ${state.bestMatch.name} mily hain jo ${state.bestMatch.category} ke expert hain. Kya main book kar doon?`,
-        bestMatch: state.bestMatch,
-        traces: traces
-      };
-    }
-
-    return { reply: "Maazrat, koi provider available nahi mila.", traces: traces };
+  generateConversationalReply(state) {
+    if (state.confidence < 60) return "Mujhy sahi sy samajh nahi aaya. Kya aap apni requirement bata sakty hain?";
+    if (state.bookingStatus === "SUCCESS") return `Mubarak ho! ${state.bookingDetails.providerName} book ho chuky hain.`;
+    if (state.bestMatch) return `Mujhy ${state.bestMatch.name} mily hain. Kya main inhein book kar doon?`;
+    return "Maazrat, koi matching provider nahi mila.";
   }
 }
 
