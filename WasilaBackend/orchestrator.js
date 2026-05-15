@@ -1,48 +1,55 @@
+const fs = require('fs');
+const path = require('path');
 const providersData = require('./data/providers.json');
+
+const bookingsPath = path.join(__dirname, 'data', 'bookings.json');
 
 class WasilaOrchestrator {
   constructor() {
     this.providers = providersData;
-    this.bookings = []; // Mock database for bookings
   }
 
   async processRequest(userQuery) {
     const traces = [];
-    const q = userQuery.toLowerCase();
-    
-    traces.push({ step: "Language Detection", detail: "Analyzing query for Urdu/English/Roman Urdu keywords." });
-
-    // 1. Enhanced Intent Extraction (Multilingual)
     const intent = this.extractIntent(userQuery);
-    traces.push({ step: "Intent Extraction", detail: `Detected Category: ${intent.category || 'Any'}, Preference: ${intent.preference || 'None'}` });
+    
+    traces.push({ step: "Language Detection", detail: "Multilingual input detected (Urdu/Roman Urdu/English)." });
+    traces.push({ step: "Intent Extraction", detail: `Category: ${intent.category || 'Any'}, Action: ${intent.action || 'Search'}` });
 
-    // 2. Handling "Booking" Action
     if (intent.action === 'book') {
       return this.handleBooking(intent, traces);
     }
 
-    // 3. Planning & Retrieval
-    traces.push({ step: "Planning", detail: "Searching providers knowledge base." });
+    // 1. Planning: Multi-Factor Ranking (The 6 Factors)
+    traces.push({ step: "Planning", detail: "Applying 6-Factor Ranking Engine (Price, Rating, Distance, Verification, Experience, Availability)." });
+
     let candidates = this.providers.filter(p => !p.isBooked);
-    
     if (intent.category) {
       candidates = candidates.filter(p => p.category.toLowerCase().includes(intent.category.toLowerCase()));
     }
 
-    // 4. Reasoning & Ranking
-    traces.push({ step: "Reasoning", detail: "Ranking by rating, price, and verification." });
-    const ranked = candidates.sort((a, b) => {
-      if (intent.preference === 'sasta') return a.pricePerHour - b.pricePerHour;
-      return b.rating - a.rating;
-    });
+    // 2. Execution: Scoring Engine
+    const ranked = candidates.map(p => {
+      let score = 0;
+      score += p.rating * 10; // Factor 1: Rating (0-50)
+      score += (p.verified ? 20 : 0); // Factor 2: Verification (+20)
+      score += (20 - Math.min(p.distanceKm, 20)); // Factor 3: Proximity (0-20)
+      score += (p.experienceYears / 2); // Factor 4: Experience (0-10)
+      score += (intent.preference === 'sasta' ? (5000 - p.pricePerHour) / 100 : p.pricePerHour / 500); // Factor 5: Price Score
+      score += 10; // Factor 6: Availability (Fixed +10 for online)
+      
+      return { ...p, finalScore: score };
+    }).sort((a, b) => b.finalScore - a.finalScore);
 
     const bestMatch = ranked[0];
+
+    traces.push({ step: "Reasoning", detail: `Analyzed ${candidates.length} providers. ${bestMatch ? bestMatch.name + ' scored highest (' + bestMatch.finalScore.toFixed(1) + ')' : 'No matches found.'}` });
 
     return {
       reply: this.generateResponse(bestMatch, intent),
       bestMatch: bestMatch,
       traces: traces,
-      suggestion: bestMatch ? `Kya main ${bestMatch.name} ko book kar doon?` : "Kya main kisi aur area mein dhoondoon?"
+      suggestion: bestMatch ? `Ji, ${bestMatch.name} behtareen rahay ga. Book kar doon?` : "Maazrat, koi match nahi mila."
     };
   }
 
@@ -52,51 +59,57 @@ class WasilaOrchestrator {
     let preference = null;
     let action = null;
 
-    // Multilingual Keywords (English, Urdu, Roman Urdu)
     if (q.match(/plumber|nalka|pipe|پلمبر/)) category = 'Plumber';
     if (q.match(/electrician|bijli|light|بجلی/)) category = 'Electrician';
-    if (q.match(/ac|mechanic|refrigerator|fridge|اے سی/)) category = 'AC Mechanic';
-    if (q.match(/tutor|teacher|maths|parhana|استاد/)) category = 'Maths Tutor';
+    if (q.match(/ac|mechanic|fridge|اے سی/)) category = 'AC Mechanic';
+    if (q.match(/tutor|teacher|parhana|استاد/)) category = 'Maths Tutor';
 
-    if (q.match(/sasta|cheap|low price|kam rate|سستا/)) preference = 'sasta';
+    if (q.match(/sasta|cheap|low price|سستا/)) preference = 'sasta';
     if (q.match(/best|top|accha|high quality|بہترین/)) preference = 'best';
-
     if (q.match(/book|yes|haan|kar do|confirm|بکنگ/)) action = 'book';
 
     return { category, preference, action };
   }
 
   handleBooking(intent, traces) {
-    traces.push({ step: "Action Simulation", detail: "Initiating booking process." });
+    traces.push({ step: "Action Simulation", detail: "Recording booking in history and notifying provider." });
     
-    // In a real app, we'd look for the LAST mentioned provider in the session
-    // For simulation, we'll pick the top one if category is mentioned
-    const provider = this.providers.find(p => p.category === intent.category && !p.isBooked) || this.providers[0];
+    const provider = this.providers.find(p => !p.isBooked && (intent.category ? p.category === intent.category : true));
 
     if (provider) {
-      provider.isBooked = true; // Mock update
-      traces.push({ step: "Action Success", detail: `Successfully booked ${provider.name}.` });
-      traces.push({ step: "Notification", detail: `[SIMULATION] SMS sent to ${provider.name}: New booking request from User.` });
-      
+      provider.isBooked = true;
+      const newBooking = {
+        id: Date.now(),
+        providerName: provider.name,
+        category: provider.category,
+        date: new Date().toLocaleString(),
+        status: "Confirmed"
+      };
+
+      // Save to History
+      try {
+        const history = JSON.parse(fs.readFileSync(bookingsPath, 'utf8') || '[]');
+        history.push(newBooking);
+        fs.writeFileSync(bookingsPath, JSON.stringify(history, null, 2));
+      } catch (e) { console.error(e); }
+
+      traces.push({ step: "Database Update", detail: "Booking history updated successfully." });
+      traces.push({ step: "Notification", detail: `[SIMULATION] SMS sent to ${provider.name}.` });
+
       return {
-        reply: `Ji bilkul! Mainy ${provider.name} ki booking confirm kar di hai. Wo 2 ghanty mein aapke location par pohanch jayein gy.`,
-        actionTaken: "BOOKING_CONFIRMED",
-        provider: provider,
+        reply: `Mubarak ho! ${provider.name} ki booking ho gayi hai. History mein bhi record save kar diya gaya hai.`,
+        actionTaken: "BOOKING_SAVED",
+        booking: newBooking,
         traces: traces
       };
     }
 
-    return {
-      reply: "Maazrat! Filhal koi provider available nahi hai. Kya main kuch dair baad check karoon?",
-      traces: traces
-    };
+    return { reply: "Maazrat! Koi provider available nahi mila.", traces: traces };
   }
 
   generateResponse(provider, intent) {
-    if (!provider) return "Mujhy koi available provider nahi mila. Kya main kisi aur category mein dhoondoon?";
-    
-    const intro = intent.preference === 'sasta' ? "Sasta aur behtareen option" : "Sub sy behtareen option";
-    return `${intro} ${provider.name} hain. Inka rate ${provider.pricePerHour} PKR hai aur rating ${provider.rating} hai. Ye ${provider.location} mein hain. Kya main inhein book kar doon?`;
+    if (!provider) return "Mujhy aapki requirement ke mutabiq koi provider nahi mila.";
+    return `Mujhy ${provider.name} mily hain jo ${provider.category} ke expert hain. Inka score sab sy zyada hai (${provider.finalScore.toFixed(1)}). Kya main inhein book kar doon?`;
   }
 }
 

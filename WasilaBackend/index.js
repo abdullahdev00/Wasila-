@@ -33,6 +33,16 @@ app.get('/api/providers', (req, res) => {
   res.json(providers);
 });
 
+// Get Booking History
+app.get('/api/bookings', (req, res) => {
+  try {
+    const data = fs.readFileSync(path.join(__dirname, 'data', 'bookings.json'), 'utf8');
+    res.json(JSON.parse(data || '[]'));
+  } catch (err) {
+    res.json([]);
+  }
+});
+
 // AI Chat Endpoint (Agentic Reasoning)
 app.post('/api/chat', async (req, res) => {
   const { message } = req.body;
