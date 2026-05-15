@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const orchestrator = require('./orchestrator');
 require('dotenv').config();
 
 const app = express();
@@ -30,6 +31,21 @@ app.get('/', (req, res) => {
 // Get all providers
 app.get('/api/providers', (req, res) => {
   res.json(providers);
+});
+
+// AI Chat Endpoint (Agentic Reasoning)
+app.post('/api/chat', async (req, res) => {
+  const { message } = req.body;
+  if (!message) {
+    return res.status(400).json({ error: 'Message is required' });
+  }
+
+  try {
+    const result = await orchestrator.processRequest(message);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
 });
 
 // Search and Filter API (Foundation for AI Tools)
