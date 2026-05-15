@@ -84,8 +84,31 @@ Past bookings dikhany ke liye simple GET request karein aur results ko FlatList 
 
 ---
 
-## 🏆 Hackathon Winning Tips
-1. **Real-time Traces**: Jaise hi user message bhejay, "AI is thinking..." ka loader dikhayein aur phir traces ko aik aik kar ke reveal karein.
-2. **Urdu UI**: Frontend mein Urdu fonts (e.g., Jameel Noori) use karein taake localized feel aaye.
-3. **Action Cards**: Best match ko aik premium card (Glassmorphism) mein dikhayein.
+## 🏗️ Technical Architecture
+Wasila follow karta hai **Decoupled Agentic Architecture**:
+- **Frontend**: React Native (Expo) - Sirf UI aur Traces dikhany ke liye.
+- **Backend Orchestrator**: Node.js - Jahan Antigravity "Brain" reside karta hai.
+- **Reasoning Loop**: Input -> Intent Extraction -> Multi-Factor Ranking -> Action Simulation -> Final Trace.
+
+## 💰 Cost Analysis (Google Cloud)
+Project ko scale karny ke liye estimated monthly costs:
+1. **Cloud Run (Compute)**: ~$5 - $10 (Based on high traffic).
+2. **Firestore (Database)**: Free Tier initially, then ~$0.18/GB.
+3. **Vertex AI / Antigravity API**: ~$0.01 per 1k characters (Reasoning cost).
+**Total Estimated Baseline**: ~$15 - $20 / month for 10,000+ users.
+
+## ⚖️ Baseline Comparison: Why Wasila?
+| Feature | Standard Search Apps | Wasila AI (Antigravity) |
+| :--- | :--- | :--- |
+| **Language** | Sirf English keywords. | Urdu, Roman Urdu, aur English (Multilingual). |
+| **Decision** | User ko khud list dekhni parti hai. | AI 6 factors par khud behtareen match dhoondta hai. |
+| **Action** | Sirf phone number milta hai. | AI actual booking aur notification simulate karta hai. |
+| **Transparency** | Black box (Kuch pata nahi chalta). | **Thinking Traces** sy user ko puri logic nazar aati hai. |
+
+---
+
+## 🛠️ Error Handling & Robustness
+- **Empty/Unknown Requests**: AI polite response deta hai agar request service category sy match na ho.
+- **No Provider Available**: System "No Match Found" handle karta hai aur alternatives suggest karta hai.
+- **Validation**: Sirf verified providers ko high score deta hai taake user trust barhay.
 
