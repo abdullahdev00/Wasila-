@@ -15,10 +15,11 @@ class RankingAgent extends BaseAgent {
     if (action === 'dispute' || action === 'book') return { rankingCompleted: false };
 
     let providers = await fetchProvidersFromFirebase();
-    let candidates = providers.filter(p => !p.isBooked);
-    if (category) {
-      candidates = candidates.filter(p => p.category.toLowerCase().includes(category.toLowerCase()));
+    if (!category) {
+      return { bestMatch: null, reason: "No category identified for ranking." };
     }
+
+    let candidates = providers.filter(p => !p.isBooked && p.category.toLowerCase().includes(category.toLowerCase()));
 
     // Handle "No Provider Found" scenario
     if (candidates.length === 0) {
