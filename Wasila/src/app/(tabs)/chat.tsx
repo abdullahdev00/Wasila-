@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   TouchableOpacity
 } from 'react-native';
+import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -41,7 +42,7 @@ export default function ChatScreen() {
     }
   ]);
   const [isLoading, setIsLoading] = useState(false);
-  const [showTraces, setShowTraces] = useState(false);
+  const [showTraces, setShowTraces] = useState(true);
 
   const sendMessage = async () => {
     if (!inputText.trim()) return;
@@ -139,9 +140,15 @@ export default function ChatScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <View style={styles.header}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+          <TouchableOpacity 
+            onPress={() => router.back()}
+            style={styles.backBtn}
+          >
+            <Ionicons name="chevron-back" size={24} color="#0F172A" />
+          </TouchableOpacity>
           <View style={styles.headerAvatar}>
             <Ionicons name="sparkles" size={20} color="#FFFFFF" />
           </View>
@@ -150,28 +157,21 @@ export default function ChatScreen() {
             <Typography variant="caption" color="primary">Orchestrator</Typography>
           </View>
         </View>
-        <TouchableOpacity 
-          style={[styles.traceToggle, showTraces && styles.traceToggleActive]}
-          onPress={() => setShowTraces(!showTraces)}
-        >
-          <Typography variant="caption" weight="bold" style={{ color: showTraces ? '#FFFFFF' : '#4F46E5' }}>
-            {showTraces ? "Hide Logic" : "View Logic"}
-          </Typography>
-        </TouchableOpacity>
       </View>
 
-      <FlatList
-        data={messages}
-        keyExtractor={item => item.id}
-        renderItem={renderMessage}
-        contentContainerStyle={styles.chatList}
-        showsVerticalScrollIndicator={false}
-      />
-
       <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
+        <FlatList
+          data={messages}
+          keyExtractor={item => item.id}
+          renderItem={renderMessage}
+          contentContainerStyle={styles.chatList}
+          showsVerticalScrollIndicator={false}
+        />
+
         <View style={styles.inputContainer}>
           <TextInput
             style={styles.input}
@@ -233,7 +233,7 @@ const styles = StyleSheet.create({
   },
   chatList: {
     padding: 24,
-    paddingBottom: 40,
+    paddingBottom: 100, // Increased to clear floating input
   },
   messageWrapper: {
     marginBottom: 24,
@@ -294,19 +294,26 @@ const styles = StyleSheet.create({
   },
   inputContainer: {
     flexDirection: 'row',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
-    paddingBottom: Platform.OS === 'ios' ? 32 : 16,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderRadius: 32,
+    ...THEME.shadows.lg,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+  },
+  backBtn: {
+    marginRight: 12,
+    padding: 4,
   },
   input: {
     flex: 1,
     minHeight: 50,
     maxHeight: 120,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: 'transparent',
     borderRadius: 25,
     paddingHorizontal: 20,
     paddingVertical: 12,

@@ -65,7 +65,7 @@ export default function LoginScreen() {
           </View>
 
           <View style={styles.form}>
-            <View style={styles.inputWrapper}>
+            <View style={[styles.inputWrapper, (loading || googleLoading) && styles.disabledInput]}>
               <Ionicons name="mail-outline" size={20} color={THEME.colors.textMuted} style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
@@ -74,10 +74,11 @@ export default function LoginScreen() {
                 onChangeText={setEmail}
                 keyboardType="email-address"
                 autoCapitalize="none"
+                editable={!loading && !googleLoading}
               />
             </View>
 
-            <View style={styles.inputWrapper}>
+            <View style={[styles.inputWrapper, (loading || googleLoading) && styles.disabledInput]}>
               <Ionicons name="lock-closed-outline" size={20} color={THEME.colors.textMuted} style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
@@ -85,6 +86,7 @@ export default function LoginScreen() {
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry
+                editable={!loading && !googleLoading}
               />
             </View>
 
@@ -207,5 +209,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     marginTop: THEME.spacing.xxl,
+  },
+  disabledInput: {
+    opacity: 0.6,
+    backgroundColor: '#F1F5F9',
   }
 });

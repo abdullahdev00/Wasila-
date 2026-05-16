@@ -77,10 +77,11 @@ export default function RegisterScreen() {
 
           <View style={styles.form}>
             {/* Role Selector */}
-            <View style={styles.roleContainer}>
+            <View style={[styles.roleContainer, (loading || googleLoading) && { opacity: 0.6 }]}>
               <TouchableOpacity 
                 style={[styles.roleBtn, role === 'customer' && styles.roleBtnActive]} 
-                onPress={() => setRoleState('customer')}
+                onPress={() => !loading && !googleLoading && setRoleState('customer')}
+                disabled={loading || googleLoading}
               >
                 <Ionicons name="person-outline" size={20} color={role === 'customer' ? '#FFF' : THEME.colors.textMuted} />
                 <Typography variant="caption" weight="bold" style={{ color: role === 'customer' ? '#FFF' : THEME.colors.textMuted, marginLeft: 8 }}>
@@ -89,7 +90,8 @@ export default function RegisterScreen() {
               </TouchableOpacity>
               <TouchableOpacity 
                 style={[styles.roleBtn, role === 'provider' && styles.roleBtnActive]} 
-                onPress={() => setRoleState('provider')}
+                onPress={() => !loading && !googleLoading && setRoleState('provider')}
+                disabled={loading || googleLoading}
               >
                 <Ionicons name="briefcase-outline" size={20} color={role === 'provider' ? '#FFF' : THEME.colors.textMuted} />
                 <Typography variant="caption" weight="bold" style={{ color: role === 'provider' ? '#FFF' : THEME.colors.textMuted, marginLeft: 8 }}>
@@ -98,17 +100,18 @@ export default function RegisterScreen() {
               </TouchableOpacity>
             </View>
 
-            <View style={styles.inputWrapper}>
+            <View style={[styles.inputWrapper, (loading || googleLoading) && styles.disabledInput]}>
               <Ionicons name="person-outline" size={20} color={THEME.colors.textMuted} style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
                 placeholder="Full Name"
                 value={name}
                 onChangeText={setName}
+                editable={!loading && !googleLoading}
               />
             </View>
 
-            <View style={styles.inputWrapper}>
+            <View style={[styles.inputWrapper, (loading || googleLoading) && styles.disabledInput]}>
               <Ionicons name="mail-outline" size={20} color={THEME.colors.textMuted} style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
@@ -117,10 +120,11 @@ export default function RegisterScreen() {
                 onChangeText={setEmail}
                 keyboardType="email-address"
                 autoCapitalize="none"
+                editable={!loading && !googleLoading}
               />
             </View>
 
-            <View style={styles.inputWrapper}>
+            <View style={[styles.inputWrapper, (loading || googleLoading) && styles.disabledInput]}>
               <Ionicons name="lock-closed-outline" size={20} color={THEME.colors.textMuted} style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
@@ -128,6 +132,7 @@ export default function RegisterScreen() {
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry
+                editable={!loading && !googleLoading}
               />
             </View>
 
@@ -255,4 +260,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: THEME.colors.border,
   },
+  disabledInput: {
+    opacity: 0.6,
+    backgroundColor: '#F1F5F9',
+  }
 });

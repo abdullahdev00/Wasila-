@@ -21,8 +21,8 @@ class RankingAgent extends BaseAgent {
 
     // Handle "No Provider Found" scenario
     if (candidates.length === 0) {
-      return { 
-        bestMatch: null, 
+      return {
+        bestMatch: null,
         error: "NO_PROVIDER_FOUND",
         fallbackSuggestion: "Maazrat! Filhal is category mein koi provider available nahi hai. Kya main aapka naam waitlist mein daal doon?"
       };
@@ -36,7 +36,7 @@ class RankingAgent extends BaseAgent {
       score += (p.experienceYears / 2); // 4. Experience (Expertise)
       score += (p.availabilityScore / 5); // 5. Availability (Reliability)
       score += (10 - (p.cancellationRate / 2)); // 6. Cancellation Rate (Commitment)
-      
+
       return { ...p, finalScore: score };
     }).sort((a, b) => b.finalScore - a.finalScore);
 

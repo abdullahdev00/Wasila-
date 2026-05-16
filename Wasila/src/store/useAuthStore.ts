@@ -8,6 +8,11 @@ export interface UserProfile {
   email: string;
   role: UserRole;
   photoURL?: string;
+  phoneNumber?: string;
+  address?: string;
+  city?: string;
+  latitude?: number;
+  longitude?: number;
   isAvailable?: boolean;
 }
 

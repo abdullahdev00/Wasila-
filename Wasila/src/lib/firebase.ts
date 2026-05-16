@@ -1,6 +1,7 @@
 import { initializeApp } from "firebase/app";
 import { initializeAuth, getAuth } from 'firebase/auth';
 import { getFirestore } from "firebase/firestore";
+import { getStorage } from "firebase/storage";
 // @ts-ignore - This module is added by npx expo install
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -34,5 +35,6 @@ try {
 
 export const auth = firebaseAuth;
 export const db = getFirestore(app);
+export const storage = getStorage(app);
 
 export default app;

@@ -1,9 +1,11 @@
 import React from 'react';
-import { View, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, ScrollView, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '../../components/ui/Typography';
 import { Card } from '../../components/ui/Card';
 import { THEME } from '../../theme';
+import { useAuthStore } from '../../store/useAuthStore';
+import { useRouter } from 'expo-router';
 
 const BOOKINGS = [
   { 
@@ -29,10 +31,26 @@ const BOOKINGS = [
 ];
 
 export default function BookingsScreen() {
+  const { user } = useAuthStore();
+  const router = useRouter();
+
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
-        <Typography variant="h2" weight="bold">My Bookings</Typography>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity onPress={() => router.push('/(tabs)/profile')} style={styles.headerAvatar}>
+            {user?.photoURL ? (
+              <Image source={{ uri: user.photoURL }} style={styles.avatarMini} />
+            ) : (
+              <View style={[styles.avatarMini, { backgroundColor: THEME.colors.primary, justifyContent: 'center', alignItems: 'center' }]}>
+                <Typography variant="caption" color="inverse" weight="bold">
+                  {(user?.name || 'G').charAt(0).toUpperCase()}
+                </Typography>
+              </View>
+            )}
+          </TouchableOpacity>
+          <Typography variant="h2" weight="bold" style={{ marginLeft: 12 }}>My Bookings</Typography>
+        </View>
         <TouchableOpacity style={styles.filterBtn}>
           <Ionicons name="filter-outline" size={20} color="#0F172A" />
         </TouchableOpacity>
@@ -102,6 +120,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 64,
     paddingBottom: 16,
+  },
+  headerAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    overflow: 'hidden',
+    ...THEME.shadows.sm,
+  },
+  avatarMini: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 18,
   },
   filterBtn: {
     width: 44,
