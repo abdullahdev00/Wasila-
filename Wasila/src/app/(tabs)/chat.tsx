@@ -18,9 +18,8 @@ import { Typography } from '../../components/ui/Typography';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
 
-type Trace = string;
-type Pricing = { base: number; distance: number; urgency: number; total: number };
-type ProviderMatch = { name: string; rating: number; pricing: Pricing; skills: string[] };
+type Trace = { agent: string; step: string; detail: any };
+type ProviderMatch = { name: string; rating: number; pricePerHour: number; location: string; category: string; skills?: string[]; finalScore?: number };
 
 type Message = {
   id: string;
@@ -28,7 +27,7 @@ type Message = {
   text: string;
   traces?: Trace[];
   bestMatch?: ProviderMatch;
-  suggestion?: string;
+  workplan?: string[];
   isError?: boolean;
 };
 
@@ -68,7 +67,7 @@ export default function ChatScreen() {
         text: data.reply || 'Main samjha nahi, dobara batayen?',
         traces: data.traces,
         bestMatch: data.bestMatch,
-        suggestion: data.suggestion,
+        workplan: data.workplan,
       };
 
       setMessages(prev => [...prev, aiMsg]);
@@ -111,7 +110,12 @@ export default function ChatScreen() {
           <View style={styles.traceContainer}>
             <Typography variant="caption" weight="bold" color="primary">🧠 Agent Reasoning Traces:</Typography>
             {item.traces.map((trace, i) => (
-              <Typography key={i} variant="caption" color="muted">- {trace}</Typography>
+              <View key={i} style={{ marginTop: 6 }}>
+                <Typography variant="caption" weight="bold" style={{ color: '#4F46E5' }}>⚙ {trace.agent}</Typography>
+                <Typography variant="caption" color="muted">
+                  {typeof trace.detail === 'object' ? (trace.detail?.reasoning || trace.detail?.category || JSON.stringify(trace.detail).substring(0, 100)) : String(trace.detail)}
+                </Typography>
+              </View>
             ))}
           </View>
         )}
@@ -119,16 +123,16 @@ export default function ChatScreen() {
         {!isUser && item.bestMatch && (
           <Card customStyle={styles.matchCard}>
             <Typography variant="h3" color="primary" weight="bold">{item.bestMatch.name}</Typography>
-            <Typography variant="caption" color="muted">Rating: ⭐ {item.bestMatch.rating}</Typography>
+            <Typography variant="caption" color="muted">⭐ {item.bestMatch.rating} • {item.bestMatch.category}</Typography>
+            <Typography variant="caption" color="muted">📍 {item.bestMatch.location}</Typography>
             
             <View style={styles.pricingBox}>
-              <Typography variant="body" weight="bold">Pricing Breakdown:</Typography>
-              <Typography variant="caption">Base: Rs. {item.bestMatch.pricing?.base}</Typography>
-              <Typography variant="caption">Surge: Rs. {item.bestMatch.pricing?.distance}</Typography>
-              <View style={styles.divider} />
-              <Typography variant="body" weight="bold" color="success">
-                Total: Rs. {item.bestMatch.pricing?.total}
-              </Typography>
+              <Typography variant="body" weight="bold">Rate: Rs. {item.bestMatch.pricePerHour}/hr</Typography>
+              {item.bestMatch.skills && (
+                <Typography variant="caption" color="muted" style={{ marginTop: 4 }}>
+                  Skills: {item.bestMatch.skills.join(', ')}
+                </Typography>
+              )}
             </View>
 
             <TouchableOpacity style={styles.bookNowBtn}>

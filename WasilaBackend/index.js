@@ -11,17 +11,24 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
+const { fetchProvidersFromFirebase } = require('./firebase');
+
 // Load Providers Data
-const providersPath = path.join(__dirname, 'data', 'providers.json');
 let providers = [];
 
-try {
-  const data = fs.readFileSync(providersPath, 'utf8');
-  providers = JSON.parse(data);
-  console.log('✅ Providers database loaded successfully.');
-} catch (err) {
-  console.error('❌ Error loading providers data:', err);
+async function loadProviders() {
+  try {
+    providers = await fetchProvidersFromFirebase();
+    console.log(`✅ Loaded ${providers.length} providers from Firebase successfully.`);
+  } catch (err) {
+    console.error('❌ Error loading providers from Firebase:', err);
+  }
 }
+
+// Initial load
+loadProviders();
+// Refresh data every 5 minutes
+setInterval(loadProviders, 5 * 60 * 1000);
 
 // Routes
 app.get('/', (req, res) => {

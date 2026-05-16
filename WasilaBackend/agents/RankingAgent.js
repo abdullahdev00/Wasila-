@@ -1,5 +1,5 @@
 const { BaseAgent } = require('../adk');
-const providers = require('../data/providers.json');
+const { fetchProvidersFromFirebase } = require('../firebase');
 
 /**
  * Agent 3: Ranking Agent
@@ -14,6 +14,7 @@ class RankingAgent extends BaseAgent {
     const { category, action } = context.state;
     if (action === 'dispute' || action === 'book') return { rankingCompleted: false };
 
+    let providers = await fetchProvidersFromFirebase();
     let candidates = providers.filter(p => !p.isBooked);
     if (category) {
       candidates = candidates.filter(p => p.category.toLowerCase().includes(category.toLowerCase()));
