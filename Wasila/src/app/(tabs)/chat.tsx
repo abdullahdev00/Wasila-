@@ -53,7 +53,8 @@ export default function ChatScreen() {
     setIsLoading(true);
 
     try {
-      const response = await fetch('http://10.11.209.35:5000/api/chat', {
+      // NOTE: Use 'localhost' for emulator, or your PC's IP address (e.g. 192.168.1.10) for physical device
+      const response = await fetch('http://localhost:5000/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: userMsg.text })

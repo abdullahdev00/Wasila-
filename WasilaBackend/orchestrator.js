@@ -25,7 +25,15 @@ class WasilaOrchestrator {
     const resultContext = await this.brain.run(userQuery);
     
     const state = resultContext.state;
-    const traces = resultContext.traces;
+    
+    // Format traces as simple strings for the frontend UI
+    const traces = resultContext.traces.map(t => {
+      if (t.step === 'PlanningAgent') return `🧠 Plan: ${t.detail.workplan[0]}`;
+      if (t.step === 'ParserAgent') return `🔍 Intent: ${t.detail.category || 'General'} (${t.detail.confidence}%)`;
+      if (t.step === 'RankingAgent') return `🏆 Best Match: ${t.detail.bestMatch ? t.detail.bestMatch.name : 'Searching...'}`;
+      if (t.step === 'BookingAgent') return `📅 Booking: ${t.detail.bookingStatus}`;
+      return `⚙️ Agent ${t.agent} processed.`;
+    });
 
     // Formatting for Frontend Visualization (Winning Edge)
     return {
