@@ -16,7 +16,7 @@ export const searchTool = new FunctionTool({
     try {
       console.log(`\n[Search Tool] Fetching '${category}' from Firebase...`);
       const providers = await fetchProvidersFromFirebase();
-      const results = providers.filter(p => {
+      const results = providers.filter((p: any) => {
         if (!p.category) return false;
         if (p.isBooked) return false;
         

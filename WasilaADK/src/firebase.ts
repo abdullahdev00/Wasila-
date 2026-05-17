@@ -1,6 +1,6 @@
 import * as dotenv from 'dotenv';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, addDoc } from 'firebase/firestore';
 
 dotenv.config();
 
@@ -42,7 +42,6 @@ export async function fetchProvidersFromFirebase() {
 }
 
 export async function createBooking(userId: string, providerId: string, details: any) {
-  const { addDoc } = require('firebase/firestore');
   const bookingsCol = collection(db, 'bookings');
   
   const newBooking = {

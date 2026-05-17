@@ -1,5 +1,6 @@
 import { LlmAgent, InMemoryRunner } from '@google/adk';
-import * as dotenv from 'dotenv';
+import { runEphemeralWithRetry } from '../utils/retryHelper.js';
+import * as dotenv from 'dotenv'; 
 dotenv.config();
 
 /**
@@ -34,19 +35,10 @@ export class ParserAgent {
     let resultText = "";
 
     try {
-      const events = this.runner.runEphemeral({
+      resultText = await runEphemeralWithRetry(this.runner, {
         userId: 'hackathon-tester',
         newMessage: { role: 'user', parts: [{ text: query }] }
       });
-
-      for await (const event of events) {
-        if (event.errorCode) {
-          throw new Error(`API Error ${event.errorCode}: ${event.errorMessage}`);
-        }
-        if (event.content && event.content.parts && event.author !== 'user') {
-          resultText += event.content.parts[0]?.text || "";
-        }
-      }
 
       // Professional JSON Extraction
       const cleanJsonStr = resultText.replace(/```json/g, "").replace(/```/g, "").trim();

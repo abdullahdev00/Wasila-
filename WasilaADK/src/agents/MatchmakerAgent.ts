@@ -1,5 +1,6 @@
 import { LlmAgent, InMemoryRunner } from '@google/adk';
-import { searchTool } from '../tools/SearchTool';
+import { runEphemeralWithRetry } from '../utils/retryHelper.js';
+import { searchTool } from '../tools/SearchTool.js';
 import * as dotenv from 'dotenv';
 dotenv.config();
 
@@ -36,20 +37,10 @@ export class MatchmakerAgent {
     const payload = `User Need: "${query}" (Category: ${category})`;
 
     try {
-      const events = this.runner.runEphemeral({
+      resultText = await runEphemeralWithRetry(this.runner, {
         userId: 'hackathon-tester',
         newMessage: { role: 'user', parts: [{ text: payload }] }
       });
-
-      for await (const event of events) {
-        if (event.errorCode) {
-          throw new Error(`API Error ${event.errorCode}: ${event.errorMessage}`);
-        }
-        // Output from tools will automatically be processed by the runner
-        if (event.content && event.content.parts && event.author !== 'user') {
-          resultText += event.content.parts[0]?.text || "";
-        }
-      }
 
       const jsonMatch = resultText.match(/\{[\s\S]*\}/);
       return JSON.parse(jsonMatch ? jsonMatch[0] : '{"bestMatch": null}');

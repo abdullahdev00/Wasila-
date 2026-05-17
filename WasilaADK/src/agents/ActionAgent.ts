@@ -1,5 +1,6 @@
 import { LlmAgent, InMemoryRunner } from '@google/adk';
-import { bookingTool } from '../tools/BookingTool';
+import { runEphemeralWithRetry } from '../utils/retryHelper.js';
+import { bookingTool } from '../tools/BookingTool.js';
 import * as dotenv from 'dotenv';
 dotenv.config();
 
@@ -34,16 +35,10 @@ export class ActionAgent {
     const payload = `User Message: "${userConfirmation}"\nProvider Info: ${JSON.stringify(providerDetails)}`;
 
     try {
-      const events = this.runner.runEphemeral({
+      resultText = await runEphemeralWithRetry(this.runner, {
         userId: 'hackathon-tester',
         newMessage: { role: 'user', parts: [{ text: payload }] }
       });
-
-      for await (const event of events) {
-        if (event.content && event.content.parts && event.author !== 'user') {
-          resultText += event.content.parts[0]?.text || "";
-        }
-      }
 
       const jsonMatch = resultText.match(/\{[\s\S]*\}/);
       return JSON.parse(jsonMatch ? jsonMatch[0] : '{"status": "error"}');

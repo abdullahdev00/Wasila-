@@ -1,4 +1,5 @@
 import { LlmAgent, InMemoryRunner } from '@google/adk';
+import { runEphemeralWithRetry } from '../utils/retryHelper.js';
 import * as dotenv from 'dotenv';
 dotenv.config();
 
@@ -29,16 +30,10 @@ export class PlanningAgent {
   async createPlan(query: string) {
     let resultText = "";
     try {
-      const events = this.runner.runEphemeral({
+      resultText = await runEphemeralWithRetry(this.runner, {
         userId: 'hackathon-tester',
         newMessage: { role: 'user', parts: [{ text: query }] }
       });
-
-      for await (const event of events) {
-        if (event.content && event.content.parts && event.author !== 'user') {
-          resultText += event.content.parts[0]?.text || "";
-        }
-      }
 
       const jsonMatch = resultText.match(/\{[\s\S]*\}/);
       return JSON.parse(jsonMatch ? jsonMatch[0] : '{"workplan": [], "strategy": "Error"}');
