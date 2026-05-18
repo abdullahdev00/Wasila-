@@ -1,50 +1,44 @@
-import { LlmAgent, InMemoryRunner } from '@google/adk';
-import { runEphemeralWithRetry } from '../utils/retryHelper.js';
-import { bookingTool } from '../tools/BookingTool.js';
-import * as dotenv from 'dotenv';
-dotenv.config();
+import { callOpenRouter } from '../utils/openRouter';
+import { createBooking } from '../firebase';
 
 /**
- * Action Agent using Official Google ADK
- * Equipped with BookingTool to modify the database.
+ * Action Agent using OpenRouter & Direct Firebase Mutations
  */
 export class ActionAgent {
-  private runner: InMemoryRunner;
-
-  constructor() {
-    const agent = new LlmAgent({
-      name: 'WasilaAction',
-      description: 'Executes final actions like booking a service provider.',
-      model: 'gemini-2.5-flash',
-      tools: [bookingTool], // Injecting the Booking Tool
-      instruction: `
-        You are the Action Executer for Wasila.
-        If the user confirms they want to proceed with a provider, use the 'book_service_provider' tool.
-        Return ONLY a JSON object: {"status": "success/error", "bookingId": "string", "message": "friendly confirmation"}
-      `
-    });
-
-    this.runner = new InMemoryRunner({
-      appName: 'WasilaOrchestrator',
-      agent: agent
-    });
-  }
-
   async executeBooking(userConfirmation: string, providerDetails: any) {
-    let resultText = "";
-    const payload = `User Message: "${userConfirmation}"\nProvider Info: ${JSON.stringify(providerDetails)}`;
-
     try {
-      resultText = await runEphemeralWithRetry(this.runner, {
-        userId: 'hackathon-tester',
-        newMessage: { role: 'user', parts: [{ text: payload }] }
-      });
+      const providerId = providerDetails.providerId;
+      const userId = providerDetails.userId || 'guest';
+      
+      console.log(`\n[ActionAgent] Programmatically creating booking in Firebase for provider '${providerId}'...`);
+      const bookingId = await createBooking(userId, providerId, { notes: userConfirmation });
+      console.log(`[ActionAgent] Created booking ID: ${bookingId}`);
 
-      const jsonMatch = resultText.match(/\{[\s\S]*\}/);
-      return JSON.parse(jsonMatch ? jsonMatch[0] : '{"status": "error"}');
+      const instruction = `
+        You are the Action Executer for Wasila.
+        A service provider has just been successfully booked for the user!
+        Generate a highly friendly, professional booking confirmation message in Roman Urdu or Urdu.
+        Mention that their booking has been successfully saved.
+      `;
+
+      const promptText = `
+        User Confirmation Message: "${userConfirmation}"
+        Booking Details:
+        - Booking ID: "${bookingId}"
+        - Provider ID: "${providerId}"
+        - User ID: "${userId}"
+      `;
+
+      const responseText = await callOpenRouter(instruction, promptText);
+      
+      return { 
+        status: "success", 
+        bookingId: bookingId, 
+        message: responseText.trim() || `Aap ki booking mukammal ho gayi hai! Booking ID: ${bookingId}` 
+      };
     } catch (error: any) {
       console.error('Action Run Error:', error.message);
-      return { status: "error", message: error.message };
+      return { status: "error", message: `Maazrat, booking create nahi ho saki: ${error.message}` };
     }
   }
 }
