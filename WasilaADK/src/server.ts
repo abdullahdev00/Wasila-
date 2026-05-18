@@ -19,13 +19,27 @@ const matchmaker = new MatchmakerAgent();
 const concierge = new ConciergeAgent();
 const actionAgent = new ActionAgent();
 
+// --- IN-MEMORY CHAT STATE ---
+// Stores the last message and provider for each user session without a database
+const chatMemory = new Map();
+
 app.post('/api/chat', async (req, res) => {
   try {
-    const { message, history } = req.body;
-    console.log(`\n--- New API Request: "${message}" ---`);
+    const { message, history, userId: rawUserId } = req.body;
+    const userId = rawUserId || 'guest';
+    console.log(`\n--- New API Request: "${message}" (User: ${userId}) ---`);
 
-    // 1. Parsing Phase
-    const parsed = await parser.parse(message);
+    // Fetch user memory
+    const userMemory = chatMemory.get(userId) || { historyText: "", lastProviderId: null };
+
+    // Inject history context so agents remember the past
+    const contextualMessage = `
+      [Recent Memory]: ${userMemory.historyText || 'No previous chat'}
+      [Current Message]: "${message}"
+    `;
+
+    // 1. Parsing Phase (Now memory-aware)
+    const parsed = await parser.parse(contextualMessage);
     console.log("Parsed Intent:", parsed);
 
     let matchResult = null;
@@ -34,9 +48,8 @@ app.post('/api/chat', async (req, res) => {
 
     // 2. Check if this is a booking confirmation action
     if (parsed.action && parsed.action.toLowerCase() === 'book') {
-      // Typically, history would contain the provider ID they are confirming.
-      // For this hackathon, we assume they passed providerId in the payload if they want to book.
-      const providerId = req.body.providerId; 
+      // Use memory to know WHO to book if frontend doesn't send it
+      const providerId = req.body.providerId || userMemory.lastProviderId; 
       if (providerId) {
         actionResult = await actionAgent.executeBooking(message, { providerId, userId: req.body.userId || 'guest' });
         finalReply = actionResult.message || "Aapki booking mukammal ho gayi hai!";
@@ -57,7 +70,16 @@ app.post('/api/chat', async (req, res) => {
       };
       const response = await concierge.reply(message, state);
       finalReply = response.reply;
+
+      // Save the provider ID for the next message (if they say "book it")
+      if (matchResult?.bestMatch) {
+        userMemory.lastProviderId = matchResult.bestMatch.id;
+      }
     }
+
+    // ALWAYS UPDATE MEMORY AFTER EVERY MESSAGE
+    userMemory.historyText = `User said: "${message}" | AI replied: "${finalReply}"`;
+    chatMemory.set(userId, userMemory);
 
     // Return the consolidated response EXACTLY matching the legacy format for the mobile app
     res.json({

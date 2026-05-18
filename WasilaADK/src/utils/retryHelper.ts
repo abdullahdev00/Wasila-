@@ -46,7 +46,13 @@ export async function runEphemeralWithRetry(
         
         if (match && match[1]) {
           const seconds = parseFloat(match[1]);
-          delay = Math.ceil(seconds * 1000) + 1500; // Wait exact time + 1.5s buffer
+          delay = Math.ceil(seconds * 1000) + 1500; // Wait exact time + buffer
+          
+          if (delay > 5000) {
+             console.warn(`⏳ [Rate Limit] Wait time is too long (${delay}ms). Failing fast to prevent UI freeze.`);
+             throw new Error("Quota exceeded. Please try again later.");
+          }
+          
           console.warn(`⚠️ [Rate Limit 429] Detected cooling period. Waiting ${delay}ms before retrying... (Attempt ${attempt}/${maxRetries})`);
         } else {
           console.warn(`⚠️ [Rate Limit 429] Retrying agent run in ${delay}ms... (Attempt ${attempt}/${maxRetries})`);
