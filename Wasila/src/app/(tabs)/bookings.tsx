@@ -54,10 +54,9 @@ export default function BookingsScreen() {
       return;
     }
 
-    const q = query(
-      collection(db, 'bookings'),
-      where('userId', '==', user.uid)
-    );
+    const q = user.role === 'provider'
+      ? query(collection(db, 'bookings'), where('providerId', '==', user.uid))
+      : query(collection(db, 'bookings'), where('userId', '==', user.uid));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const fetchedBookings = snapshot.docs.map(doc => ({
@@ -164,7 +163,9 @@ export default function BookingsScreen() {
                 </View>
               )}
             </TouchableOpacity>
-            <Typography variant="h2" weight="bold" style={{ marginLeft: 12 }}>My Bookings</Typography>
+            <Typography variant="h2" weight="bold" style={{ marginLeft: 12 }}>
+              {user.role === 'provider' ? 'Assigned Jobs' : 'My Bookings'}
+            </Typography>
           </View>
         </View>
 
@@ -201,13 +202,23 @@ export default function BookingsScreen() {
 
                   <View style={styles.cardFooter}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                      {booking.providerPhotoURL ? (
-                        <Image source={{ uri: booking.providerPhotoURL }} style={styles.providerMiniAvatar} />
+                      {user.role === 'provider' ? (
+                        booking.userPhotoURL ? (
+                          <Image source={{ uri: booking.userPhotoURL }} style={styles.providerMiniAvatar} />
+                        ) : (
+                          <Ionicons name="person-circle-outline" size={20} color="#64748B" />
+                        )
                       ) : (
-                        <Ionicons name="person-circle-outline" size={20} color="#64748B" />
+                        booking.providerPhotoURL ? (
+                          <Image source={{ uri: booking.providerPhotoURL }} style={styles.providerMiniAvatar} />
+                        ) : (
+                          <Ionicons name="person-circle-outline" size={20} color="#64748B" />
+                        )
                       )}
-                      <Typography variant="caption" style={{ marginLeft: 6 }} numberOfLines={1}>
-                        {booking.providerName || 'Professional'}
+                      <Typography variant="caption" style={{ marginLeft: 6, flex: 1 }} numberOfLines={1}>
+                        {user.role === 'provider'
+                          ? `Client: ${booking.userName || 'Client User'}`
+                          : `Provider: ${booking.providerName || 'Professional'}`}
                       </Typography>
                     </View>
                     <Typography variant="body" weight="bold" color="primary">Rs. {Number(booking.price || 0).toLocaleString()}</Typography>
