@@ -104,12 +104,12 @@ const MessageBubble = ({ item }: { item: Message }) => {
                 serviceId: item.bestMatch.id,
                 serviceName: serviceData.name || item.bestMatch.name,
                 category: serviceData.category || item.bestMatch.category || 'General',
-                price: serviceData.price || item.bestMatch.pricePerHour || 0,
+                price: item.bestMatch.pricePerHour || serviceData.price || 0,
                 providerId: serviceData.providerId || item.bestMatch.id,
                 providerName: serviceData.providerName || item.bestMatch.name,
                 providerPhotoURL: serviceData.providerPhotoURL || '',
                 status: 'pending',
-                date: 'Tomorrow, 10:00 AM', // Default date
+                date: item.bestMatch.negotiatedDateTime || 'Tomorrow, 10:00 AM',
                 timestamp: new Date().toISOString(),
                 notes: 'Booking created via AI search suggestion card.'
               };

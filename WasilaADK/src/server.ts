@@ -6,7 +6,9 @@ import { MatchmakerAgent } from './agents/MatchmakerAgent';
 import { ConciergeAgent } from './agents/ConciergeAgent';
 import { ActionAgent } from './agents/ActionAgent';
 import { PricingAgent } from './agents/PricingAgent';
-import { getUserName, fetchUserBookings } from './firebase';
+import { SupplierAgent } from './agents/SupplierAgent';
+import { getUserName, fetchUserBookings, db } from './firebase';
+import { getDoc, doc } from 'firebase/firestore';
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -21,6 +23,7 @@ const matchmaker = new MatchmakerAgent();
 const concierge = new ConciergeAgent();
 const actionAgent = new ActionAgent();
 const pricingAgent = new PricingAgent();
+const supplierAgent = new SupplierAgent();
 
 // --- IN-MEMORY CHAT STATE ---
 // Stores the last message and provider for each user session without a database
@@ -88,8 +91,80 @@ app.post('/api/chat', async (req, res) => {
           const location = matchResult.bestMatch.location || "Unknown";
           const quote = await pricingAgent.calculateQuote(basePrice, message, location);
           matchResult.bestMatch.pricing = quote;
-          matchResult.bestMatch.pricePerHour = quote.total;
+          
           console.log(`[Pricing Engine] Dynamic quote calculated: ${quote.total} PKR (Base: ${quote.base}, Distance: ${quote.distanceFee}, Urgency: ${quote.urgencyFee})`);
+
+          // --- AGENT-TO-AGENT NEGOTIATION LOOP ---
+          let providerInstructions = '';
+          try {
+            const serviceDoc = await getDoc(doc(db, 'services', matchResult.bestMatch.id));
+            if (serviceDoc.exists()) {
+              const serviceData = serviceDoc.data();
+              providerInstructions = serviceData.providerInstructions || '';
+            }
+          } catch (err) {
+            console.warn(`[A2A Negotiation] Failed to fetch providerInstructions for service ${matchResult.bestMatch.id}:`, err);
+          }
+
+          const proposal = {
+            category: parsed.category || matchResult.bestMatch.category || 'General',
+            serviceName: matchResult.bestMatch.serviceName || matchResult.bestMatch.name,
+            dateTime: parsed.dateTime || 'Tomorrow, 10:00 AM',
+            location: location,
+            proposedPrice: quote.total
+          };
+
+          const negotiationHistory: string[] = [];
+          const negotiationTraces: string[] = [];
+          let currentProposedPrice = proposal.proposedPrice;
+          let currentProposedDateTime = proposal.dateTime;
+          let currentStatus = 'pending';
+          const maxTurns = 2; // Strict limit to prevent infinite loops
+
+          for (let turn = 1; turn <= maxTurns; turn++) {
+            console.log(`[A2A Negotiation] Turn ${turn}: Customer Agent proposing Rs. ${currentProposedPrice} at ${currentProposedDateTime}`);
+            negotiationTraces.push(`[Negotiation Turn ${turn}] Customer Agent proposed Rs. ${currentProposedPrice} at ${currentProposedDateTime}`);
+            negotiationHistory.push(`Customer Agent: Proposed Rs. ${currentProposedPrice} at ${currentProposedDateTime}`);
+
+            const evaluation = await supplierAgent.evaluateProposal(
+              matchResult.bestMatch.providerName || matchResult.bestMatch.name,
+              providerInstructions,
+              {
+                ...proposal,
+                proposedPrice: currentProposedPrice,
+                dateTime: currentProposedDateTime
+              },
+              negotiationHistory
+            );
+
+            console.log(`[A2A Negotiation] Supplier Agent Response:`, evaluation);
+            negotiationTraces.push(`[Negotiation Turn ${turn}] ${matchResult.bestMatch.providerName || matchResult.bestMatch.name} Agent: ${evaluation.reasoning} (Decision: ${evaluation.status})`);
+            negotiationHistory.push(`${matchResult.bestMatch.providerName || matchResult.bestMatch.name} Agent: Decision=${evaluation.status}, Price=${evaluation.negotiatedPrice}, Time=${evaluation.negotiatedDateTime}`);
+
+            if (evaluation.status === 'accepted') {
+              currentStatus = 'accepted';
+              currentProposedPrice = evaluation.negotiatedPrice;
+              currentProposedDateTime = evaluation.negotiatedDateTime;
+              break;
+            } else if (evaluation.status === 'counter_offer') {
+              currentProposedPrice = evaluation.negotiatedPrice;
+              currentProposedDateTime = evaluation.negotiatedDateTime;
+              if (turn === maxTurns) {
+                currentStatus = 'accepted'; // Force agreement on last turn to avoid hanging
+                negotiationTraces.push(`[Negotiation] Customer Agent accepted counter-offer of Rs. ${currentProposedPrice} at ${currentProposedDateTime}`);
+                break;
+              }
+            } else {
+              currentStatus = 'rejected';
+              break;
+            }
+          }
+
+          // Update final bestMatch payload with negotiated details
+          matchResult.bestMatch.pricePerHour = currentProposedPrice;
+          matchResult.bestMatch.negotiatedDateTime = currentProposedDateTime;
+          matchResult.bestMatch.negotiatedStatus = currentStatus;
+          matchResult.bestMatch.negotiationTraces = negotiationTraces;
         }
       }
 
@@ -126,7 +201,8 @@ app.post('/api/chat', async (req, res) => {
       traces: [
         `Plan: Analyze`,
         `Intent: ${parsed.category || 'General'}`,
-        `Provider: ${matchResult?.bestMatch?.name || 'None found'}`
+        `Provider: ${matchResult?.bestMatch?.name || 'None found'}`,
+        ...(matchResult?.bestMatch?.negotiationTraces || [])
       ],
       bestMatch: matchResult?.bestMatch,
       actionStatus: matchResult?.bestMatch ? 'PROPOSAL_READY' : 'SEARCHING'
