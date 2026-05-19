@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, 
   Text,
@@ -9,10 +9,11 @@ import {
   Platform,
   ActivityIndicator,
   TouchableOpacity,
-  Alert
+  Alert,
+  Image
 } from 'react-native';
 import { db } from '../../lib/firebase';
-import { doc, getDoc, collection, addDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, addDoc, query, where, onSnapshot } from 'firebase/firestore';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -254,6 +255,51 @@ export default function ChatScreen() {
   ]);
   const [isLoading, setIsLoading] = useState(false);
 
+  const [providerChats, setProviderChats] = useState<any[]>([]);
+  const [loadingChats, setLoadingChats] = useState(false);
+  const [selectedChat, setSelectedChat] = useState<any | null>(null);
+
+  // Sync real-time query for provider chats
+  useEffect(() => {
+    if (!user || user.role !== 'provider') return;
+
+    setLoadingChats(true);
+    const q = query(
+      collection(db, 'chats'),
+      where('providerId', '==', user.uid)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const chats = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      // Sort by updatedAt desc
+      chats.sort((a: any, b: any) => {
+        const dateA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+        const dateB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+        return dateB - dateA;
+      });
+      setProviderChats(chats);
+      setLoadingChats(false);
+    }, (error) => {
+      console.error("Error loading provider chats:", error);
+      setLoadingChats(false);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // Keep selected chat updated when Firestore messages sync
+  useEffect(() => {
+    if (selectedChat) {
+      const updated = providerChats.find(c => c.id === selectedChat.id);
+      if (updated) {
+        setSelectedChat(updated);
+      }
+    }
+  }, [providerChats]);
+
   const sendMessage = async () => {
     if (!inputText.trim()) return;
 
@@ -297,61 +343,184 @@ export default function ChatScreen() {
     }
   };
 
+  const renderChatItem = ({ item }: { item: any }) => {
+    const formattedDate = item.updatedAt 
+      ? new Date(item.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+      : '';
+
+    return (
+      <TouchableOpacity 
+        style={styles.chatCard}
+        onPress={() => setSelectedChat(item)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.chatCardLeft}>
+          {item.userPhotoURL ? (
+            <Image source={{ uri: item.userPhotoURL }} style={styles.chatAvatar} />
+          ) : (
+            <View style={styles.chatAvatarPlaceholder}>
+              <Text style={styles.chatAvatarText}>
+                {(item.userName || 'C').charAt(0).toUpperCase()}
+              </Text>
+            </View>
+          )}
+          <View style={styles.chatCardInfo}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+              <Typography variant="body" weight="bold" color="main" style={{ flex: 1 }} numberOfLines={1}>
+                {item.userName || 'Client'}
+              </Typography>
+              <Typography variant="caption" color="muted">
+                {formattedDate}
+              </Typography>
+            </View>
+            
+            <Typography variant="caption" color="muted" style={{ marginTop: 2, marginBottom: 6, width: '90%' }} numberOfLines={1}>
+              {item.lastMessage || 'Negotiating...'}
+            </Typography>
+
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+              <View style={styles.categoryBadge}>
+                <Typography variant="caption" weight="bold" style={{ fontSize: 10, color: THEME.colors.primary }}>
+                  {item.category?.toUpperCase() || 'GENERAL'}
+                </Typography>
+              </View>
+              <Typography variant="caption" color="primary" weight="medium">
+                View Logs →
+              </Typography>
+            </View>
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <View style={styles.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
           <TouchableOpacity 
-            onPress={() => router.back()}
+            onPress={() => {
+              if (user?.role === 'provider' && selectedChat) {
+                setSelectedChat(null);
+              } else {
+                router.back();
+              }
+            }}
             style={styles.backBtn}
           >
             <Ionicons name="chevron-back" size={24} color="#0F172A" />
           </TouchableOpacity>
-          <View style={styles.headerAvatar}>
-            <Ionicons name="sparkles" size={20} color="#FFFFFF" />
-          </View>
-          <View>
-            <Typography variant="h3" weight="bold">Wasila AI</Typography>
-            <Typography variant="caption" color="primary">Orchestrator</Typography>
+          
+          {user?.role === 'provider' && selectedChat ? (
+            selectedChat.userPhotoURL ? (
+              <Image source={{ uri: selectedChat.userPhotoURL }} style={styles.headerAvatarImg} />
+            ) : (
+              <View style={[styles.headerAvatar, { backgroundColor: '#4F46E5' }]}>
+                <Text style={{ color: '#FFF', fontWeight: 'bold', fontSize: 16 }}>
+                  {(selectedChat.userName || 'C').charAt(0).toUpperCase()}
+                </Text>
+              </View>
+            )
+          ) : (
+            <View style={styles.headerAvatar}>
+              <Ionicons name="sparkles" size={20} color="#FFFFFF" />
+            </View>
+          )}
+
+          <View style={{ marginLeft: user?.role === 'provider' && selectedChat ? 12 : 0 }}>
+            <Typography variant="h3" weight="bold">
+              {user?.role === 'provider' 
+                ? (selectedChat ? selectedChat.userName : 'Agent negotiations')
+                : 'Wasila AI'
+              }
+            </Typography>
+            <Typography variant="caption" color="primary">
+              {user?.role === 'provider'
+                ? (selectedChat ? `Category: ${selectedChat.category || 'General'}` : 'AI Supplier Agent Logs')
+                : 'Orchestrator'
+              }
+            </Typography>
           </View>
         </View>
       </View>
 
-      <KeyboardAvoidingView 
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-      >
-        <FlatList
-          data={messages}
-          keyExtractor={item => item.id}
-          renderItem={({ item }) => <MessageBubble item={item} />}
-          contentContainerStyle={styles.chatList}
-          showsVerticalScrollIndicator={false}
-        />
-
-        <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.input}
-            placeholder="How can I help you?"
-            value={inputText}
-            onChangeText={setInputText}
-            placeholderTextColor="#94A3B8"
-            multiline
+      {user?.role === 'provider' ? (
+        selectedChat === null ? (
+          loadingChats ? (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+              <ActivityIndicator size="large" color="#4F46E5" />
+            </View>
+          ) : providerChats.length === 0 ? (
+            <View style={styles.blankState}>
+              <Ionicons name="chatbubbles-outline" size={64} color="#CBD5E1" />
+              <Typography variant="h3" weight="bold" style={{ marginTop: 16 }}>No active negotiations</Typography>
+              <Typography variant="body" color="muted" style={{ textAlign: 'center', marginTop: 8, paddingHorizontal: 32 }}>
+                When customers chat with Wasila AI and get matched with you, your AI Supplier Agent's negotiation logs will appear here.
+              </Typography>
+            </View>
+          ) : (
+            <FlatList
+              data={providerChats}
+              keyExtractor={item => item.id}
+              renderItem={renderChatItem}
+              contentContainerStyle={{ padding: 20 }}
+              showsVerticalScrollIndicator={false}
+            />
+          )
+        ) : (
+          <View style={{ flex: 1 }}>
+            <FlatList
+              data={selectedChat.messages}
+              keyExtractor={(item, index) => index.toString()}
+              renderItem={({ item }) => <MessageBubble item={item} />}
+              contentContainerStyle={styles.chatList}
+              showsVerticalScrollIndicator={false}
+            />
+            <View style={styles.agentFooter}>
+              <Ionicons name="shield-checkmark" size={20} color="#10B981" style={{ marginRight: 8 }} />
+              <Typography variant="caption" style={{ color: '#065F46', flex: 1 }} weight="medium">
+                Autonomous mode active. Your Supplier Agent is negotiating automatically.
+              </Typography>
+            </View>
+          </View>
+        )
+      ) : (
+        <KeyboardAvoidingView 
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+        >
+          <FlatList
+            data={messages}
+            keyExtractor={item => item.id}
+            renderItem={({ item }) => <MessageBubble item={item} />}
+            contentContainerStyle={styles.chatList}
+            showsVerticalScrollIndicator={false}
           />
-          <TouchableOpacity 
-            style={[styles.sendBtn, !inputText.trim() && styles.sendBtnDisabled]}
-            onPress={sendMessage}
-            disabled={!inputText.trim() || isLoading}
-          >
-            {isLoading ? (
-              <ActivityIndicator color="#FFFFFF" size="small" />
-            ) : (
-              <Ionicons name="send" size={20} color="#FFFFFF" />
-            )}
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
+
+          <View style={styles.inputContainer}>
+            <TextInput
+              style={styles.input}
+              placeholder="How can I help you?"
+              value={inputText}
+              onChangeText={setInputText}
+              placeholderTextColor="#94A3B8"
+              multiline
+            />
+            <TouchableOpacity 
+              style={[styles.sendBtn, !inputText.trim() && styles.sendBtnDisabled]}
+              onPress={sendMessage}
+              disabled={!inputText.trim() || isLoading}
+            >
+              {isLoading ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <Ionicons name="send" size={20} color="#FFFFFF" />
+              )}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      )}
     </SafeAreaView>
   );
 }
@@ -513,5 +682,67 @@ const styles = StyleSheet.create({
   },
   sendBtnDisabled: {
     backgroundColor: '#CBD5E1',
-  }
+  },
+  chatCard: {
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    borderRadius: 20,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    ...THEME.shadows.sm,
+  },
+  chatCardLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  chatAvatar: {
+    width: 50,
+    height: 50,
+    borderRadius: 16,
+  },
+  chatAvatarPlaceholder: {
+    width: 50,
+    height: 50,
+    borderRadius: 16,
+    backgroundColor: '#EEF2FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  chatAvatarText: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#4F46E5',
+    fontFamily: THEME.fonts.bold,
+  },
+  chatCardInfo: {
+    flex: 1,
+    marginLeft: 16,
+  },
+  categoryBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: '#EEF2FF',
+  },
+  headerAvatarImg: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+  },
+  blankState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+  },
+  agentFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E6F4EA',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#A7F3D0',
+  },
 });

@@ -1,6 +1,6 @@
 import * as dotenv from 'dotenv';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, addDoc, doc, getDoc } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 
 dotenv.config();
 
@@ -139,6 +139,60 @@ export async function fetchUserBookings(userId: string): Promise<any[]> {
   } catch (err) {
     console.error(`[fetchUserBookings] Failed to query bookings for UID: ${userId}`, err);
     return [];
+  }
+}
+
+export async function saveChatSession(
+  sessionId: string,
+  userId: string,
+  userName: string,
+  messages: any[],
+  metadata: {
+    providerId?: string;
+    providerName?: string;
+    category?: string;
+    lastMessage?: string;
+  }
+) {
+  try {
+    const chatDocRef = doc(db, 'chats', sessionId);
+    const chatSnap = await getDoc(chatDocRef);
+    
+    // Fetch user photo URL if not already present
+    let userPhotoURL = '';
+    try {
+      const userSnap = await getDoc(doc(db, 'users', userId));
+      if (userSnap.exists()) {
+        userPhotoURL = userSnap.data().photoURL || '';
+      }
+    } catch (e) {
+      console.warn("Failed to fetch user photo for chat:", e);
+    }
+
+    const chatData: any = {
+      id: sessionId,
+      userId,
+      userName,
+      userPhotoURL,
+      updatedAt: new Date().toISOString(),
+      messages,
+      ...metadata
+    };
+
+    // Remove undefined fields
+    Object.keys(chatData).forEach(key => chatData[key] === undefined && delete chatData[key]);
+
+    if (chatSnap.exists()) {
+      await updateDoc(chatDocRef, chatData);
+    } else {
+      await setDoc(chatDocRef, {
+        ...chatData,
+        createdAt: new Date().toISOString()
+      });
+    }
+    console.log(`[Firebase Helper] Chat session ${sessionId} saved successfully in Firestore.`);
+  } catch (error) {
+    console.error(`[saveChatSession] Error saving chat ${sessionId}:`, error);
   }
 }
 

@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { ThemeProvider, DefaultTheme } from '@react-navigation/native';
 import { onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { useAuthStore, UserRole, UserProfile } from '../store/useAuthStore';
 import { View, ActivityIndicator } from 'react-native';
@@ -13,48 +13,68 @@ export default function RootLayout() {
   const router = useRouter();
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    let unsubscribeSnapshot: (() => void) | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
+      // Clean up previous snapshot listener if exists
+      if (unsubscribeSnapshot) {
+        unsubscribeSnapshot();
+        unsubscribeSnapshot = null;
+      }
+
       if (firebaseUser) {
-        // Fetch additional user data from Firestore
-        const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-        if (userDoc.exists()) {
-          const userData = userDoc.data();
-          setUser({
-            uid: firebaseUser.uid,
-            email: firebaseUser.email || '',
-            name: userData.name || 'User',
-            role: userData.role || 'customer',
-            photoURL: userData.photoURL,
-            isAvailable: userData.isAvailable,
-          });
-        } else {
-          // Create new user document for social logins
-          const newUser: UserProfile = {
-            uid: firebaseUser.uid,
-            email: firebaseUser.email || '',
-            name: firebaseUser.displayName || 'User',
-            role: 'customer' as UserRole,
-          };
-          
-          try {
-            // Save to Firestore with createdAt (Firestore can handle extra fields)
-            await setDoc(doc(db, 'users', firebaseUser.uid), {
+        const userDocRef = doc(db, 'users', firebaseUser.uid);
+        
+        // Listen to the Firestore user profile in real-time
+        unsubscribeSnapshot = onSnapshot(userDocRef, (docSnap) => {
+          if (docSnap.exists()) {
+            const userData = docSnap.data();
+            setUser({
+              uid: firebaseUser.uid,
+              email: firebaseUser.email || '',
+              name: userData.name || 'User',
+              role: userData.role || 'customer',
+              photoURL: userData.photoURL,
+              isAvailable: userData.isAvailable,
+              phoneNumber: userData.phoneNumber || '',
+              address: userData.address || '',
+              city: userData.city || '',
+              latitude: userData.latitude,
+              longitude: userData.longitude
+            });
+          } else {
+            // Create new user document for social logins if not exists
+            const newUser: UserProfile = {
+              uid: firebaseUser.uid,
+              email: firebaseUser.email || '',
+              name: firebaseUser.displayName || 'User',
+              role: 'customer' as UserRole,
+            };
+            
+            setDoc(userDocRef, {
               ...newUser,
               createdAt: new Date().toISOString(),
-            });
-            setUser(newUser);
-          } catch (e) {
-            console.error("Error creating user doc:", e);
+            }).catch(e => console.error("Error creating user doc:", e));
+
             setUser(newUser);
           }
-        }
+          setLoading(false);
+        }, (error) => {
+          console.error("Firestore user onSnapshot error:", error);
+          setLoading(false);
+        });
       } else {
         setUser(null);
+        setLoading(false);
       }
-      setLoading(false);
     });
 
-    return unsubscribe;
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeSnapshot) {
+        unsubscribeSnapshot();
+      }
+    };
   }, []);
 
   useEffect(() => {

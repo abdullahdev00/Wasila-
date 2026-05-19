@@ -13,6 +13,16 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Allow anyone to read/write chats (used by backend/agents and frontend)
+    match /chats/{document=**} {
+      allow read, write: if true;
+    }
+
+    // Allow anyone to read/write user profiles
+    match /users/{document=**} {
+      allow read, write: if true;
+    }
+
     // Default rule for all other collections
     match /{document=**} {
       // Sirf authenticated users ko read/write allow karein

@@ -50,15 +50,19 @@ export default function BookingsScreen() {
 
   React.useEffect(() => {
     if (!user) {
+      console.log("[Bookings Debug] No user is logged in.");
       setLoading(false);
       return;
     }
+
+    console.log("[Bookings Debug] Active User:", { uid: user.uid, role: user.role, email: user.email });
 
     const q = user.role === 'provider'
       ? query(collection(db, 'bookings'), where('providerId', '==', user.uid))
       : query(collection(db, 'bookings'), where('userId', '==', user.uid));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
+      console.log(`[Bookings Debug] Query snapshot returned ${snapshot.docs.length} documents.`);
       const fetchedBookings = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
@@ -70,7 +74,7 @@ export default function BookingsScreen() {
       setBookings(fetchedBookings);
       setLoading(false);
     }, (err) => {
-      console.error("Error fetching bookings:", err);
+      console.error("[Bookings Debug] Error fetching bookings:", err);
       setLoading(false);
     });
 

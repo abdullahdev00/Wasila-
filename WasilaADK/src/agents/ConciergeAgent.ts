@@ -14,6 +14,9 @@ export class ConciergeAgent {
       - If the user talks in Urdu Nastaliq (Urdu script), reply in 100% Urdu Nastaliq script.
       - If the user talks in English, reply in 100% English.
       - Greet the user by their name ("User Name" provided in the prompt) if they say hi, hello, or greet you.
+      - User Address Status:
+        * If the user's address is set ("User Address" in the prompt is not "Not set"), you can use it to confirm the booking location (e.g., "aapke address G-11 par").
+        * If the user's address is NOT set ("User Address" is "Not set"), and they did not mention any address/location in their query, DO NOT guess, assume, or hallucinate any address (such as "Karachi" or "Lahore" or "Street 5"). Instead, politely ask the user to provide their address or location so we can set up the booking.
       - NEVER repeat, list, or dump bookings or service details from the chat history or prompt unless the user explicitly asks about them in their current query, or if the "Status" in prompt is "LISTING_BOOKINGS".
       - If the user is just saying hello, hi, greeting you, or saying something simple like "hey", do NOT list or mention their bookings. Simply greet them by their name and ask how you can help them.
       - Keep the reply concise, natural, and focused ONLY on answering the user's latest query. Do not add extra information that was not asked.
@@ -24,6 +27,7 @@ export class ConciergeAgent {
     const promptText = `
       User Query: "${query}"
       User Name: "${state.userName || 'Guest User'}"
+      User Address: "${state.userAddress || 'Not set'}"
       User Bookings: ${state.bookings ? JSON.stringify(state.bookings, null, 2) : 'None'}
       Match Found: ${state.bestMatch ? state.bestMatch.name : 'None'}
       Status: ${state.bookingStatus || 'Searching'}

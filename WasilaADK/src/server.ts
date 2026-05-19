@@ -7,8 +7,9 @@ import { ConciergeAgent } from './agents/ConciergeAgent';
 import { ActionAgent } from './agents/ActionAgent';
 import { PricingAgent } from './agents/PricingAgent';
 import { SupplierAgent } from './agents/SupplierAgent';
-import { getUserName, fetchUserBookings, db } from './firebase';
-import { getDoc, doc } from 'firebase/firestore';
+import { getUserName, fetchUserBookings, db, saveChatSession } from './firebase';
+import { getDoc, doc, updateDoc } from 'firebase/firestore';
+import { callOpenRouter } from './utils/openRouter';
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -37,13 +38,34 @@ app.post('/api/chat', async (req, res) => {
 
     // Fetch user details dynamically from Firebase
     let userName = rawUserName || '';
+    let userAddress = '';
+    if (userId && userId !== 'guest' && !userId.startsWith('test-user-')) {
+      try {
+        const userSnap = await getDoc(doc(db, 'users', userId));
+        if (userSnap.exists()) {
+          const uData = userSnap.data();
+          userName = userName || uData.name || 'Guest User';
+          userAddress = uData.address || '';
+          console.log(`[User Profile] Resolved UID '${userId}' to Name: '${userName}', Address: '${userAddress || 'None'}'`);
+        }
+      } catch (err) {
+        console.warn(`[User Profile] Failed to fetch user profile for UID: ${userId}`, err);
+      }
+    }
     if (!userName || userName.trim() === '') {
       userName = await getUserName(userId);
     }
-    console.log(`[User Identity] Resolved UID '${userId}' to name: '${userName}'`);
 
     // Fetch user memory
-    const userMemory = chatMemory.get(userId) || { history: [], lastProviderId: null };
+    const userMemory = chatMemory.get(userId) || { 
+      history: [], 
+      lastProviderId: null,
+      chatSessionId: null,
+      fullMessages: [],
+      currentCategory: null,
+      lastProviderUserId: null,
+      lastProviderName: null
+    };
 
     // Inject history context so agents remember the past
     const historyText = userMemory.history.map((h: any) => `User: "${h.user}" | AI: "${h.ai}"`).join('\n');
@@ -57,6 +79,44 @@ app.post('/api/chat', async (req, res) => {
     // 1. Intent Parsing Phase (Now memory-aware)
     const parsed = await parser.parse(contextualMessage);
     console.log("Parsed Intent:", parsed);
+
+    // Auto-update user profile address if not set, but user specified it in chat
+    if (userId && userId !== 'guest' && !userId.startsWith('test-user-') && !userAddress && parsed.location) {
+      try {
+        await updateDoc(doc(db, 'users', userId), {
+          address: parsed.location
+        });
+        console.log(`[User Profile Auto-Update] Automatically updated address to '${parsed.location}' for UID '${userId}'`);
+        userAddress = parsed.location;
+      } catch (updateErr) {
+        console.warn(`[User Profile Auto-Update] Failed to write address for UID '${userId}':`, updateErr);
+      }
+    }
+
+    // Resolve location: parsed location overrides profile address, falls back to Islamabad
+    const resolvedLocation = parsed.location || userAddress || 'Islamabad';
+
+    // Initialize session ID if not exists
+    if (!userMemory.chatSessionId) {
+      userMemory.chatSessionId = `chat_${userId}_${Date.now()}`;
+      userMemory.fullMessages = [];
+    }
+
+    // Detect if category changed to start a fresh chat session
+    if (parsed.category) {
+      if (!userMemory.currentCategory || userMemory.currentCategory !== parsed.category) {
+        userMemory.chatSessionId = `chat_${userId}_${Date.now()}`;
+        userMemory.fullMessages = [];
+        userMemory.currentCategory = parsed.category;
+      }
+    }
+
+    // Push the user message
+    userMemory.fullMessages.push({
+      sender: 'user',
+      text: message,
+      timestamp: new Date().toISOString()
+    });
 
     let matchResult = null;
     let actionResult = null;
@@ -101,16 +161,24 @@ app.post('/api/chat', async (req, res) => {
             if (serviceDoc.exists()) {
               const serviceData = serviceDoc.data();
               providerInstructions = serviceData.providerInstructions || '';
+              
+              // Resolve and store provider user details
+              const matchedProviderUserId = serviceData.providerId || matchResult.bestMatch.id;
+              const matchedProviderName = serviceData.providerName || matchResult.bestMatch.providerName || matchResult.bestMatch.name;
+              
+              userMemory.lastProviderUserId = matchedProviderUserId;
+              userMemory.lastProviderName = matchedProviderName;
+              console.log(`[A2A Negotiation] Resolved provider: ${matchedProviderName} (UID: ${matchedProviderUserId})`);
             }
           } catch (err) {
-            console.warn(`[A2A Negotiation] Failed to fetch providerInstructions for service ${matchResult.bestMatch.id}:`, err);
+            console.warn(`[A2A Negotiation] Failed to fetch provider details for service ${matchResult.bestMatch.id}:`, err);
           }
 
           const proposal = {
             category: parsed.category || matchResult.bestMatch.category || 'General',
             serviceName: matchResult.bestMatch.serviceName || matchResult.bestMatch.name,
             dateTime: parsed.dateTime || 'Tomorrow, 10:00 AM',
-            location: location,
+            location: resolvedLocation,
             proposedPrice: quote.total
           };
 
@@ -171,6 +239,7 @@ app.post('/api/chat', async (req, res) => {
       // 4. Concierge Generation Phase
       const state = { 
         userName: userName,
+        userAddress: userAddress,
         bookings: userBookings,
         bestMatch: matchResult?.bestMatch, 
         bookingStatus: parsed.action === 'view_bookings' ? 'LISTING_BOOKINGS' : (matchResult?.bestMatch ? 'PROPOSAL_READY' : 'SEARCHING')
@@ -192,6 +261,30 @@ app.post('/api/chat', async (req, res) => {
     if (userMemory.history.length > 5) {
       userMemory.history.shift();
     }
+
+    // Push the AI message
+    userMemory.fullMessages.push({
+      sender: 'ai',
+      text: finalReply,
+      timestamp: new Date().toISOString(),
+      traces: matchResult?.bestMatch?.negotiationTraces || [],
+      bestMatch: matchResult?.bestMatch || null
+    });
+
+    // Save to Firestore
+    await saveChatSession(
+      userMemory.chatSessionId,
+      userId,
+      userName,
+      userMemory.fullMessages,
+      {
+        providerId: userMemory.lastProviderUserId || undefined,
+        providerName: userMemory.lastProviderName || undefined,
+        category: userMemory.currentCategory || undefined,
+        lastMessage: finalReply
+      }
+    );
+
     chatMemory.set(userId, userMemory);
 
     // Return the consolidated response EXACTLY matching the legacy format for the mobile app
@@ -233,6 +326,34 @@ app.post('/api/chat', async (req, res) => {
         actionStatus: "ERROR"
       });
     }
+  }
+});
+
+app.post('/api/generate-instructions', async (req, res) => {
+  try {
+    const { name, category, price } = req.body;
+    console.log(`[AI Instructions Generator] Request for: ${name} (Category: ${category}, Price: ${price})`);
+
+    const systemPrompt = `
+      You are the Wasila Platform AI assistant.
+      Your task is to generate short, clear, and realistic business negotiation guidelines for a service provider's agent.
+      These guidelines should be written in English, brief, and format as bullet points (max 3 bullets).
+
+      Rules to generate:
+      1. Mention a minimum acceptable price threshold. This must be slightly lower than or equal to the published base price of Rs. ${price} (e.g. minimum Rs. ${Math.round(price * 0.8)} or Rs. ${price}) so that the agent can accept negotiations starting down from the base price.
+      2. Suggest daily availability (e.g. Working hours: 9 AM to 6 PM, Sunday holiday).
+      3. Suggest some slot preference (e.g. busy tomorrow morning, but free in the afternoon).
+      
+      Respond with ONLY the bullet points, no chat, no intro, no wrap-up.
+    `;
+
+    const userPrompt = `Generate guidelines for: Name="${name}", Category="${category}", Base Price=Rs. ${price}`;
+    
+    const result = await callOpenRouter(systemPrompt, userPrompt, { isJson: false });
+    res.json({ instructions: result.trim() });
+  } catch (error: any) {
+    console.error("[AI Instructions Generator] Error:", error.message);
+    res.status(500).json({ error: "Failed to generate instructions" });
   }
 });
 

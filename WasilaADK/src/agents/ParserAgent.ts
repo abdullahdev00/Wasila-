@@ -14,15 +14,16 @@ export class ParserAgent {
         * Set action to 'book' if the user confirms a booking, wants to hire a provider, says "book it", "confirm booking", "book krdo", "booking kar do", "yes", "kar do", "theek hai", "yes please".
         * Otherwise set it to 'search'.
       - dateTime: A string representing any date or time mentioned by the user for scheduling/booking (e.g., "Tomorrow, 3:00 PM", "Today, 5:00 PM"). If the user says "3 bjy" or "teen baje", map it to a standard time like "3:00 PM" (e.g., "Today, 3:00 PM" or "Tomorrow, 3:00 PM" based on context). If the user did not specify any date/time, return null.
+      - location: Any location, city, sector, area, or address details mentioned by the user in their query (e.g., "G-11 Islamabad", "Gulberg Lahore", "DHA Phase 6", "House 45, Street 12"). If the user did not specify any location/address, return null.
       - confidence (0-100)
       
-      Return ONLY a JSON object: {"category": string | null, "action": string | null, "dateTime": string | null, "confidence": number}
+      Return ONLY a JSON object: {"category": string | null, "action": string | null, "dateTime": string | null, "location": string | null, "confidence": number}
     `;
 
     try {
       const responseText = await callOpenRouter(instruction, query, { isJson: true });
       const cleanJsonStr = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
-      const parsed = JSON.parse(cleanJsonStr || '{"category": null, "action": null, "dateTime": null, "confidence": 0}');
+      const parsed = JSON.parse(cleanJsonStr || '{"category": null, "action": null, "dateTime": null, "location": null, "confidence": 0}');
       if (parsed.category) {
         // Remove leading/trailing colons, spaces, and punctuation
         parsed.category = parsed.category.replace(/^[:\s\p{P}]+|[:\s\p{P}]+$/gu, "").trim();

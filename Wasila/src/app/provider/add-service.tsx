@@ -20,6 +20,7 @@ import { db, storage, auth } from '../../lib/firebase';
 import { collection, addDoc, serverTimestamp, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useAuthStore } from '../../store/useAuthStore';
+import { API_BASE_URL } from '../../lib/apiConfig';
 
 const CATEGORIES = [
   { id: '1', name: 'Cleaning', icon: 'sparkles-outline' },
@@ -38,12 +39,55 @@ export default function AddServiceScreen() {
   const [loading, setLoading] = useState(false);
   const [fetchingData, setFetchingData] = useState(!!editId);
   const [image, setImage] = useState<string | null>(null);
+  const [isGeneratingInstructions, setIsGeneratingInstructions] = useState(false);
+
+  const generateAIInstructions = async () => {
+    if (!formData.name || !formData.price) {
+      Alert.alert('Missing Info', 'Please enter service name and price first to generate instructions.');
+      return;
+    }
+    
+    setIsGeneratingInstructions(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/generate-instructions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: formData.name,
+          category: formData.category,
+          price: parseFloat(formData.price) || 0,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Server responded with an error');
+      }
+
+      const data = await response.json();
+      if (data.instructions) {
+        setFormData(prev => ({
+          ...prev,
+          providerInstructions: data.instructions
+        }));
+      } else {
+        throw new Error('No instructions returned from AI');
+      }
+    } catch (error) {
+      console.error('Error generating AI instructions:', error);
+      Alert.alert('AI Generation Failed', 'Could not generate instructions. Please try again.');
+    } finally {
+      setIsGeneratingInstructions(false);
+    }
+  };
   const [formData, setFormData] = useState({
     name: '',
     category: 'Cleaning',
     price: '',
     description: '',
     isActive: true,
+    providerInstructions: '',
   });
 
   // Fetch service data if editing
@@ -64,6 +108,7 @@ export default function AddServiceScreen() {
           price: data.price.toString(),
           description: data.description,
           isActive: data.isActive,
+          providerInstructions: data.providerInstructions || '',
         });
         setImage(data.imageUrl);
       }
@@ -164,6 +209,7 @@ export default function AddServiceScreen() {
         address: user.address || '',
         latitude: user.latitude || null,
         longitude: user.longitude || null,
+        providerInstructions: formData.providerInstructions,
         updatedAt: serverTimestamp(),
       };
 
@@ -319,6 +365,56 @@ export default function AddServiceScreen() {
               value={formData.description}
               onChangeText={(text) => setFormData({ ...formData, description: text })}
             />
+          </View>
+
+          <View style={styles.inputGroup}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Typography variant="caption" weight="bold" color="muted" style={styles.label}>
+                  AGENT INSTRUCTIONS (PRIVATE)
+                </Typography>
+                <Ionicons name="sparkles" size={14} color="#6366F1" style={{ marginLeft: 6 }} />
+              </View>
+              <TouchableOpacity 
+                onPress={generateAIInstructions}
+                disabled={isGeneratingInstructions}
+                style={{ 
+                  flexDirection: 'row', 
+                  alignItems: 'center', 
+                  backgroundColor: '#EEF2FF', 
+                  paddingHorizontal: 12, 
+                  paddingVertical: 6, 
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: '#E0E7FF'
+                }}
+                activeOpacity={0.7}
+              >
+                {isGeneratingInstructions ? (
+                  <ActivityIndicator size="small" color="#6366F1" style={{ width: 14, height: 14 }} />
+                ) : (
+                  <>
+                    <Ionicons name="flash" size={12} color="#6366F1" style={{ marginRight: 4 }} />
+                    <Typography variant="caption" weight="bold" style={{ color: '#6366F1', fontSize: 11 }}>
+                      AI Generate
+                    </Typography>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={[styles.input, styles.textArea, { height: 100 }]}
+              placeholder="E.g., I charge Rs. 2200 minimum, do not accept anything below. I am busy tomorrow at 11:00 AM, but I can do 12:30 PM instead."
+              placeholderTextColor="#94A3B8"
+              multiline
+              numberOfLines={3}
+              textAlignVertical="top"
+              value={formData.providerInstructions}
+              onChangeText={(text) => setFormData({ ...formData, providerInstructions: text })}
+            />
+            <Typography variant="caption" color="muted" style={{ fontSize: 11, marginLeft: 4, marginTop: -4 }}>
+              Instructions for your Supplier AI agent to negotiate price and slot details with customers on your behalf.
+            </Typography>
           </View>
 
           {/* Active Status Toggle */}
