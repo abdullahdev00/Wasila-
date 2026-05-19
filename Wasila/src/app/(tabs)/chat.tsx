@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { 
   View, 
+  Text,
   TextInput, 
   FlatList, 
   StyleSheet, 
@@ -36,8 +37,25 @@ type Message = {
   isError?: boolean;
 };
 
+const renderFormattedText = (text: string) => {
+  if (!text) return null;
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      const cleanText = part.slice(2, -2);
+      return (
+        <Text key={index} style={{ fontFamily: THEME.fonts.bold, fontWeight: '700' }}>
+          {cleanText}
+        </Text>
+      );
+    }
+    return part;
+  });
+};
+
 const MessageBubble = ({ item }: { item: Message }) => {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isBookingLoading, setIsBookingLoading] = useState(false);
   const isUser = item.sender === 'user';
   const { user } = useAuthStore();
 
@@ -68,9 +86,11 @@ const MessageBubble = ({ item }: { item: Message }) => {
           text: "Confirm", 
           onPress: async () => {
             try {
+              setIsBookingLoading(true);
               // Fetch full service details from firestore
               const serviceSnap = await getDoc(doc(db, 'services', item.bestMatch.id!));
               if (!serviceSnap.exists()) {
+                setIsBookingLoading(false);
                 Alert.alert("Error", "Service details not found in database.");
                 return;
               }
@@ -97,12 +117,14 @@ const MessageBubble = ({ item }: { item: Message }) => {
               console.log("[Chat Match Booking] Creating booking:", newBooking);
               await addDoc(bookingsCol, newBooking);
               
+              setIsBookingLoading(false);
               Alert.alert(
                 "Booking Confirmed!",
                 `Your booking has been successfully created.`,
                 [{ text: "OK", onPress: () => router.replace('/(tabs)/bookings') }]
               );
             } catch (error: any) {
+              setIsBookingLoading(false);
               console.error("Error creating match booking:", error);
               Alert.alert("Booking Failed", error.message);
             }
@@ -167,13 +189,13 @@ const MessageBubble = ({ item }: { item: Message }) => {
           end={{ x: 1, y: 1 }}
         >
           <Typography color="inverse" variant="body">
-            {item.text}
+            {renderFormattedText(item.text)}
           </Typography>
         </LinearGradient>
       ) : (
         <View style={[styles.bubble, styles.aiBubble, item.isError && styles.errorBubble]}>
           <Typography color={item.isError ? "error" : "main"} variant="body">
-            {item.text}
+            {renderFormattedText(item.text)}
           </Typography>
         </View>
       )}
@@ -203,8 +225,16 @@ const MessageBubble = ({ item }: { item: Message }) => {
             )}
           </View>
 
-          <TouchableOpacity style={styles.bookNowBtn} onPress={handleBookNow}>
-            <Typography color="inverse" weight="bold">Book Now</Typography>
+          <TouchableOpacity 
+            style={[styles.bookNowBtn, isBookingLoading && { backgroundColor: '#CBD5E1' }]} 
+            onPress={handleBookNow}
+            disabled={isBookingLoading}
+          >
+            {isBookingLoading ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <Typography color="inverse" weight="bold">Book Now</Typography>
+            )}
           </TouchableOpacity>
         </Card>
       )}
@@ -238,7 +268,8 @@ export default function ChatScreen() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           message: userMsg.text,
-          userId: user?.uid || 'guest'
+          userId: user?.uid || 'guest',
+          userName: user?.name || ''
         })
       });
       

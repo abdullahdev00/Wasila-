@@ -102,3 +102,43 @@ export async function createBooking(userId: string, serviceDocId: string, detail
   const docRef = await addDoc(bookingsCol, newBooking);
   return docRef.id;
 }
+
+export async function getUserName(userId: string): Promise<string> {
+  if (!userId || userId === 'guest' || userId.startsWith('test-user-')) return 'Guest User';
+  try {
+    const userSnap = await getDoc(doc(db, 'users', userId));
+    if (userSnap.exists()) {
+      return userSnap.data().name || 'Guest User';
+    }
+  } catch (err) {
+    console.warn(`[getUserName] Failed to fetch user name for UID: ${userId}`, err);
+  }
+  return 'Guest User';
+}
+
+export async function fetchUserBookings(userId: string): Promise<any[]> {
+  if (!userId || userId === 'guest') return [];
+  try {
+    const bookingsCol = collection(db, 'bookings');
+    const bookingsSnapshot = await getDocs(bookingsCol);
+    const bookings: any[] = [];
+    bookingsSnapshot.forEach(doc => {
+      const data = doc.data();
+      if (data.userId === userId) {
+        bookings.push({
+          id: doc.id,
+          serviceName: data.serviceName || 'Unknown Service',
+          providerName: data.providerName || 'Professional',
+          status: data.status || 'pending',
+          date: data.date || 'Tomorrow, 10:00 AM',
+          price: data.price || 0
+        });
+      }
+    });
+    return bookings;
+  } catch (err) {
+    console.error(`[fetchUserBookings] Failed to query bookings for UID: ${userId}`, err);
+    return [];
+  }
+}
+

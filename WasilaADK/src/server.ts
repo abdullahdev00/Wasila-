@@ -6,6 +6,7 @@ import { MatchmakerAgent } from './agents/MatchmakerAgent';
 import { ConciergeAgent } from './agents/ConciergeAgent';
 import { ActionAgent } from './agents/ActionAgent';
 import { PricingAgent } from './agents/PricingAgent';
+import { getUserName, fetchUserBookings } from './firebase';
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -27,9 +28,16 @@ const chatMemory = new Map();
 
 app.post('/api/chat', async (req, res) => {
   try {
-    const { message, history, userId: rawUserId } = req.body;
+    const { message, history, userId: rawUserId, userName: rawUserName } = req.body;
     const userId = rawUserId || 'guest';
     console.log(`\n--- New API Request: "${message}" (User: ${userId}) ---`);
+
+    // Fetch user details dynamically from Firebase
+    let userName = rawUserName || '';
+    if (!userName || userName.trim() === '') {
+      userName = await getUserName(userId);
+    }
+    console.log(`[User Identity] Resolved UID '${userId}' to name: '${userName}'`);
 
     // Fetch user memory
     const userMemory = chatMemory.get(userId) || { history: [], lastProviderId: null };
@@ -43,13 +51,14 @@ app.post('/api/chat', async (req, res) => {
       [Current User Message]: "${message}"
     `;
 
-    // 1. Parsing Phase (Now memory-aware)
+    // 1. Intent Parsing Phase (Now memory-aware)
     const parsed = await parser.parse(contextualMessage);
     console.log("Parsed Intent:", parsed);
 
     let matchResult = null;
     let actionResult = null;
     let finalReply = "";
+    let userBookings = null;
 
     // 2. Check if this is a booking confirmation action
     if (parsed.action && parsed.action.toLowerCase() === 'book') {
@@ -66,6 +75,12 @@ app.post('/api/chat', async (req, res) => {
         finalReply = "Maazrat, kis provider ko book karna hai ye samajh nahi aaya.";
       }
     } else {
+      // Fetch bookings if user wants to view them
+      if (parsed.action && parsed.action.toLowerCase() === 'view_bookings') {
+        userBookings = await fetchUserBookings(userId);
+        console.log(`[User Bookings] Fetched ${userBookings.length} booking(s) for UID '${userId}'`);
+      }
+
       if (parsed.category) {
         matchResult = await matchmaker.findMatch(message, parsed.category);
         if (matchResult?.bestMatch) {
@@ -80,8 +95,10 @@ app.post('/api/chat', async (req, res) => {
 
       // 4. Concierge Generation Phase
       const state = { 
+        userName: userName,
+        bookings: userBookings,
         bestMatch: matchResult?.bestMatch, 
-        bookingStatus: matchResult?.bestMatch ? 'PROPOSAL_READY' : 'SEARCHING' 
+        bookingStatus: parsed.action === 'view_bookings' ? 'LISTING_BOOKINGS' : (matchResult?.bestMatch ? 'PROPOSAL_READY' : 'SEARCHING')
       };
       const response = await concierge.reply(message, state);
       finalReply = response.reply;

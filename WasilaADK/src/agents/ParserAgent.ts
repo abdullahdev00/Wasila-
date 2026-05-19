@@ -9,7 +9,10 @@ export class ParserAgent {
       You are the Intent Parser for Wasila. 
       Extract the following fields from the user's query and context:
       - category (e.g., Plumber, Electrician, AC Mechanic, Maths Tutor, Painter, Carpenter)
-      - action (search, book, dispute). Set action to 'book' if the user confirms booking, wants to hire, says "book it", "confirm booking", "book krdo", "booking kar do", "yes", "kar do", "theek hai", "yes please". Otherwise set it to 'search'.
+      - action (search, book, dispute, view_bookings). 
+        * Set action to 'view_bookings' if the user is asking to view, list, check, or inquire about their booked services, scheduled jobs, active bookings, or past orders (e.g., "meri bookings dikhao", "mery kya orders hain", "show my bookings", "check my services", "booking check krna").
+        * Set action to 'book' if the user confirms a booking, wants to hire a provider, says "book it", "confirm booking", "book krdo", "booking kar do", "yes", "kar do", "theek hai", "yes please".
+        * Otherwise set it to 'search'.
       - dateTime: A string representing any date or time mentioned by the user for scheduling/booking (e.g., "Tomorrow, 3:00 PM", "Today, 5:00 PM"). If the user says "3 bjy" or "teen baje", map it to a standard time like "3:00 PM" (e.g., "Today, 3:00 PM" or "Tomorrow, 3:00 PM" based on context). If the user did not specify any date/time, return null.
       - confidence (0-100)
       

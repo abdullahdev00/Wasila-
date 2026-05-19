@@ -46,6 +46,7 @@ export class MatchmakerAgent {
       `;
 
       const responseText = await callOpenRouter(instruction, promptText, { isJson: true });
+      console.log(`[Matchmaker] Raw LLM response:`, responseText);
       const jsonMatch = responseText.match(/\{[\s\S]*\}/);
       return JSON.parse(jsonMatch ? jsonMatch[0] : '{"bestMatch": null}');
     } catch (error: any) {

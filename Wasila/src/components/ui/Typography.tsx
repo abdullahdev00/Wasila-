@@ -87,7 +87,7 @@ const styles = StyleSheet.create({
   successColor: { color: THEME.colors.success },
 
   // -- Weights --
-  regularWeight: { fontWeight: '400' },
-  mediumWeight: { fontWeight: '500' },
-  boldWeight: { fontWeight: '700' },
+  regularWeight: { fontFamily: THEME.fonts.regular, fontWeight: '400' },
+  mediumWeight: { fontFamily: THEME.fonts.medium, fontWeight: '500' },
+  boldWeight: { fontFamily: THEME.fonts.bold, fontWeight: '700' },
 });
