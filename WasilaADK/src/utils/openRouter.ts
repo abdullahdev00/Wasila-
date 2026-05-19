@@ -60,6 +60,7 @@ export async function callOpenRouter(
               "HTTP-Referer": "https://wasila.ai",
               "X-Title": "Wasila ADK"
             },
+            timeout: 15000, // 15 seconds fail-fast timeout
             validateStatus: () => true // Allow handling error codes manually in our logic
           }
         );

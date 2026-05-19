@@ -14,8 +14,9 @@ import { Typography } from '../../components/ui/Typography';
 import { THEME } from '../../theme';
 import { BlurView } from 'expo-blur';
 import { db } from '../../lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
-import { ActivityIndicator } from 'react-native';
+import { doc, getDoc, collection, addDoc } from 'firebase/firestore';
+import { ActivityIndicator, Alert } from 'react-native';
+import { useAuthStore } from '../../store/useAuthStore';
 
 const { width } = Dimensions.get('window');
 
@@ -40,6 +41,69 @@ export default function ServiceDetailScreen() {
   });
 
   const [loading, setLoading] = React.useState(!params.name); // Only load if we don't have basic data
+  const { user } = useAuthStore();
+  const [bookingLoading, setBookingLoading] = React.useState(false);
+
+  const handleManualBooking = async () => {
+    if (!user) {
+      Alert.alert(
+        "Login Required",
+        "You must be logged in to book a service.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Login", onPress: () => router.push('/(auth)/login') }
+        ]
+      );
+      return;
+    }
+
+    Alert.alert(
+      "Confirm Booking",
+      `Are you sure you want to book "${service.name}" for Rs. ${Number(service.price || 0).toLocaleString()}?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Confirm", 
+          onPress: async () => {
+            setBookingLoading(true);
+            try {
+              const bookingsCol = collection(db, 'bookings');
+              const newBooking = {
+                userId: user.uid,
+                userName: user.name || 'Guest User',
+                userPhotoURL: user.photoURL || '',
+                serviceId: service.id,
+                serviceName: service.name,
+                category: service.category || 'General',
+                price: parseFloat(service.price || '0'),
+                providerId: service.providerId || service.id,
+                providerName: service.providerName || 'Professional',
+                providerPhotoURL: service.providerPhotoURL || '',
+                status: 'pending',
+                date: 'Tomorrow, 10:00 AM', // Default scheduled date
+                timestamp: new Date().toISOString(),
+                notes: 'Manual booking created via app.'
+              };
+
+              console.log("[Manual Booking] Creating booking:", newBooking);
+              await addDoc(bookingsCol, newBooking);
+              
+              Alert.alert(
+                "Booking Confirmed!",
+                `Your booking for ${service.name} has been successfully created.`,
+                [{ text: "OK", onPress: () => router.replace('/(tabs)/bookings') }]
+              );
+            } catch (error: any) {
+              console.error("Error creating manual booking:", error);
+              Alert.alert("Booking Failed", error.message);
+            } finally {
+              setBookingLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  };
   
   React.useEffect(() => {
     const fetchService = async () => {
@@ -197,8 +261,16 @@ export default function ServiceDetailScreen() {
           <Typography variant="caption" color="muted">Total Price</Typography>
           <Typography variant="h2" weight="bold" color="primary">Rs. {Number(service.price || 0).toLocaleString()}</Typography>
         </View>
-        <TouchableOpacity style={styles.bookNowBtn}>
-          <Typography variant="body" color="inverse" weight="bold">Book Now</Typography>
+        <TouchableOpacity 
+          style={[styles.bookNowBtn, bookingLoading && { opacity: 0.7 }]} 
+          onPress={handleManualBooking}
+          disabled={bookingLoading}
+        >
+          {bookingLoading ? (
+            <ActivityIndicator color="#FFF" />
+          ) : (
+            <Typography variant="body" color="inverse" weight="bold">Book Now</Typography>
+          )}
         </TouchableOpacity>
       </BlurView>
     </View>

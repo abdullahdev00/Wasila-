@@ -34,7 +34,8 @@ export class MatchmakerAgent {
       const instruction = `
         You are the Matchmaker for Wasila.
         Rank the provided candidates based on their rating, relevance to the user need, and status.
-        Return ONLY a JSON object: {"bestMatch": {"id": "string", "name": "string", "rating": number, "category": "string"}, "reasoning": "explanation"}
+        Extract the candidate's serviceName as "name", and the candidate's "name" as "providerName".
+        Return ONLY a JSON object: {"bestMatch": {"id": "string", "name": "string", "providerName": "string", "rating": number, "category": "string", "pricePerHour": number, "location": "string"}, "reasoning": "explanation"}
       `;
 
       const promptText = `

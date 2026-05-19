@@ -7,8 +7,11 @@ import {
   KeyboardAvoidingView, 
   Platform,
   ActivityIndicator,
-  TouchableOpacity
+  TouchableOpacity,
+  Alert
 } from 'react-native';
+import { db } from '../../lib/firebase';
+import { doc, getDoc, collection, addDoc } from 'firebase/firestore';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,9 +21,10 @@ import { Typography } from '../../components/ui/Typography';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
 import { API_BASE_URL } from '../../lib/apiConfig';
+import { useAuthStore } from '../../store/useAuthStore';
 
 type Trace = { agent: string; step: string; detail: any };
-type ProviderMatch = { name: string; rating: number; pricePerHour: number; location: string; category: string; skills?: string[]; finalScore?: number };
+type ProviderMatch = { id?: string; name: string; providerName?: string; rating: number; pricePerHour: number; location: string; category: string; skills?: string[]; finalScore?: number };
 
 type Message = {
   id: string;
@@ -35,6 +39,78 @@ type Message = {
 const MessageBubble = ({ item }: { item: Message }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const isUser = item.sender === 'user';
+  const { user } = useAuthStore();
+
+  const handleBookNow = async () => {
+    if (!user) {
+      Alert.alert(
+        "Login Required",
+        "You must be logged in to book a service.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Login", onPress: () => router.push('/(auth)/login') }
+        ]
+      );
+      return;
+    }
+
+    if (!item.bestMatch || !item.bestMatch.id) {
+      Alert.alert("Error", "Invalid service provider selection.");
+      return;
+    }
+
+    Alert.alert(
+      "Confirm Booking",
+      `Are you sure you want to book "${item.bestMatch.name}"?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Confirm", 
+          onPress: async () => {
+            try {
+              // Fetch full service details from firestore
+              const serviceSnap = await getDoc(doc(db, 'services', item.bestMatch.id!));
+              if (!serviceSnap.exists()) {
+                Alert.alert("Error", "Service details not found in database.");
+                return;
+              }
+              const serviceData = serviceSnap.data();
+
+              const bookingsCol = collection(db, 'bookings');
+              const newBooking = {
+                userId: user.uid,
+                userName: user.name || 'Guest User',
+                userPhotoURL: user.photoURL || '',
+                serviceId: item.bestMatch.id,
+                serviceName: serviceData.name || item.bestMatch.name,
+                category: serviceData.category || item.bestMatch.category || 'General',
+                price: serviceData.price || item.bestMatch.pricePerHour || 0,
+                providerId: serviceData.providerId || item.bestMatch.id,
+                providerName: serviceData.providerName || item.bestMatch.name,
+                providerPhotoURL: serviceData.providerPhotoURL || '',
+                status: 'pending',
+                date: 'Tomorrow, 10:00 AM', // Default date
+                timestamp: new Date().toISOString(),
+                notes: 'Booking created via AI search suggestion card.'
+              };
+
+              console.log("[Chat Match Booking] Creating booking:", newBooking);
+              await addDoc(bookingsCol, newBooking);
+              
+              Alert.alert(
+                "Booking Confirmed!",
+                `Your booking has been successfully created.`,
+                [{ text: "OK", onPress: () => router.replace('/(tabs)/bookings') }]
+              );
+            } catch (error: any) {
+              console.error("Error creating match booking:", error);
+              Alert.alert("Booking Failed", error.message);
+            }
+          }
+        }
+      ]
+    );
+  };
 
   return (
     <View style={[styles.messageWrapper, isUser ? styles.messageWrapperUser : styles.messageWrapperAI]}>
@@ -106,11 +182,20 @@ const MessageBubble = ({ item }: { item: Message }) => {
       {!isUser && item.bestMatch && (
         <Card customStyle={styles.matchCard}>
           <Typography variant="h3" color="primary" weight="bold">{item.bestMatch.name}</Typography>
+          {item.bestMatch.providerName && (
+            <Typography variant="body" weight="medium" style={{ marginTop: 2, marginBottom: 4, color: '#4B5563' }}>
+              by {item.bestMatch.providerName}
+            </Typography>
+          )}
           <Typography variant="caption" color="muted">⭐ {item.bestMatch.rating} • {item.bestMatch.category}</Typography>
-          <Typography variant="caption" color="muted">📍 {item.bestMatch.location}</Typography>
+          {item.bestMatch.location && (
+            <Typography variant="caption" color="muted">📍 {item.bestMatch.location}</Typography>
+          )}
           
           <View style={styles.pricingBox}>
-            <Typography variant="body" weight="bold">Rate: Rs. {item.bestMatch.pricePerHour}/hr</Typography>
+            <Typography variant="body" weight="bold">
+              Rate: Rs. {item.bestMatch.pricePerHour ? `${item.bestMatch.pricePerHour}/hr` : 'Dynamic'}
+            </Typography>
             {item.bestMatch.skills && (
               <Typography variant="caption" color="muted" style={{ marginTop: 4 }}>
                 Skills: {item.bestMatch.skills.join(', ')}
@@ -118,7 +203,7 @@ const MessageBubble = ({ item }: { item: Message }) => {
             )}
           </View>
 
-          <TouchableOpacity style={styles.bookNowBtn}>
+          <TouchableOpacity style={styles.bookNowBtn} onPress={handleBookNow}>
             <Typography color="inverse" weight="bold">Book Now</Typography>
           </TouchableOpacity>
         </Card>
@@ -128,6 +213,7 @@ const MessageBubble = ({ item }: { item: Message }) => {
 };
 
 export default function ChatScreen() {
+  const { user } = useAuthStore();
   const [inputText, setInputText] = useState('');
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -150,7 +236,10 @@ export default function ChatScreen() {
       const response = await fetch(`${API_BASE_URL}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMsg.text })
+        body: JSON.stringify({ 
+          message: userMsg.text,
+          userId: user?.uid || 'guest'
+        })
       });
       
       const data = await response.json();

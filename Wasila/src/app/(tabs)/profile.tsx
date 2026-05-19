@@ -397,7 +397,11 @@ export default function ProfileScreen() {
             onPress={(e) => setLocation(e.nativeEvent.coordinate)}
           >
             {location && (
-              <Marker coordinate={location} draggable />
+              <Marker 
+                coordinate={location} 
+                draggable 
+                onDragEnd={(e) => setLocation(e.nativeEvent.coordinate)}
+              />
             )}
           </MapView>
 
@@ -448,7 +452,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 24,
-    paddingBottom: 40,
+    paddingBottom: 100,
   },
   profileHeader: {
     alignItems: 'center',

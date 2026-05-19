@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, ScrollView, StyleSheet, TouchableOpacity, Dimensions, ActivityIndicator, TextInput } from 'react-native';
+import { View, ScrollView, StyleSheet, TouchableOpacity, Dimensions, ActivityIndicator, TextInput, Alert } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -11,7 +11,7 @@ import { Typography } from '../../components/ui/Typography';
 import { Card } from '../../components/ui/Card';
 import { useAuthStore } from '../../store/useAuthStore';
 import { db } from '../../lib/firebase';
-import { collection, query, where, onSnapshot, limit, orderBy } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, limit, orderBy, updateDoc, doc } from 'firebase/firestore';
 
 const { width } = Dimensions.get('window');
 
@@ -79,6 +79,102 @@ export default function HomeScreen() {
   const [userLocation, setUserLocation] = React.useState<{ latitude: number, longitude: number } | null>(null);
   const [selectedCategory, setSelectedCategory] = React.useState<string | null>(null);
   const role = user?.role || 'customer';
+
+  // Provider Bookings States & Handlers
+  const [providerBookings, setProviderBookings] = React.useState<any[]>([]);
+  const [loadingProviderBookings, setLoadingProviderBookings] = React.useState(true);
+
+  React.useEffect(() => {
+    if (role !== 'provider' || !user) {
+      setLoadingProviderBookings(false);
+      return;
+    }
+
+    const q = query(
+      collection(db, 'bookings'),
+      where('providerId', '==', user.uid)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const fetched = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as any[];
+
+      fetched.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      setProviderBookings(fetched);
+      setLoadingProviderBookings(false);
+    }, (err) => {
+      console.error("Error fetching provider bookings:", err);
+      setLoadingProviderBookings(false);
+    });
+
+    return () => unsubscribe();
+  }, [role, user]);
+
+  const handleAcceptBooking = async (bookingId: string) => {
+    try {
+      await updateDoc(doc(db, 'bookings', bookingId), {
+        status: 'accepted',
+        timestamp: new Date().toISOString()
+      });
+      Alert.alert("Success", "Booking accepted successfully!");
+    } catch (error: any) {
+      console.error("Error accepting booking:", error);
+      Alert.alert("Error", error.message);
+    }
+  };
+
+  const handleDeclineBooking = async (bookingId: string) => {
+    Alert.alert(
+      "Decline Request",
+      "Are you sure you want to decline this booking request?",
+      [
+        { text: "No", style: "cancel" },
+        { 
+          text: "Yes, Decline", 
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await updateDoc(doc(db, 'bookings', bookingId), {
+                status: 'declined',
+                timestamp: new Date().toISOString()
+              });
+              Alert.alert("Declined", "The booking request has been declined.");
+            } catch (error: any) {
+              console.error("Error declining booking:", error);
+              Alert.alert("Error", error.message);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleCompleteBooking = async (bookingId: string) => {
+    Alert.alert(
+      "Complete Job",
+      "Are you sure you want to mark this job as completed?",
+      [
+        { text: "No", style: "cancel" },
+        { 
+          text: "Yes, Completed", 
+          onPress: async () => {
+            try {
+              await updateDoc(doc(db, 'bookings', bookingId), {
+                status: 'completed',
+                timestamp: new Date().toISOString()
+              });
+              Alert.alert("Success", "Job marked as completed!");
+            } catch (error: any) {
+              console.error("Error completing booking:", error);
+              Alert.alert("Error", error.message);
+            }
+          }
+        }
+      ]
+    );
+  };
 
   const filteredServices = services.filter(service => {
     const matchesSearch = service.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -335,103 +431,145 @@ export default function HomeScreen() {
     </>
   );
 
-  const renderProviderDashboard = () => (
-    <>
-      {/* Welcome Message */}
-      <View style={{ marginBottom: 24 }}>
-        <Typography variant="h2" weight="bold">Dashboard Overview</Typography>
-        <Typography variant="body" color="muted">Monitor your business performance</Typography>
-      </View>
+  const renderProviderDashboard = () => {
+    const pendingRequests = providerBookings.filter(b => b.status === 'pending' || b.status === 'rescheduled');
+    const ongoingTasks = providerBookings.filter(b => b.status === 'accepted');
+    
+    const totalEarnings = providerBookings
+      .filter(b => b.status === 'completed')
+      .reduce((sum, b) => sum + (Number(b.price) || 0), 0);
+      
+    const completedJobsCount = providerBookings.filter(b => b.status === 'completed').length;
 
-      {/* Stats Row */}
-      <View style={styles.statsRow}>
-        <View style={[styles.statCard, { backgroundColor: '#EEF2FF' }]}>
-          <View style={styles.statIconWrapper}>
-            <Ionicons name="wallet" size={22} color="#4F46E5" />
-          </View>
-          <Typography variant="caption" color="muted" style={{ marginTop: 10, fontSize: 12 }}>Earnings</Typography>
-          <Typography variant="h2" weight="bold" color="primary">Rs. 45.2k</Typography>
-        </View>
-        
-        <View style={[styles.statCard, { backgroundColor: '#ECFDF5' }]}>
-          <View style={[styles.statIconWrapper, { backgroundColor: '#D1FAE5' }]}>
-            <Ionicons name="star" size={22} color="#10B981" />
-          </View>
-          <Typography variant="caption" color="muted" style={{ marginTop: 10, fontSize: 12 }}>Rating</Typography>
-          <Typography variant="h2" weight="bold" color="secondary">4.9/5</Typography>
+    return (
+      <>
+        {/* Welcome Message */}
+        <View style={{ marginBottom: 24 }}>
+          <Typography variant="h2" weight="bold">Dashboard Overview</Typography>
+          <Typography variant="body" color="muted">Monitor your business performance</Typography>
         </View>
 
-        <View style={[styles.statCard, { backgroundColor: '#FFF7ED' }]}>
-          <View style={[styles.statIconWrapper, { backgroundColor: '#FFEDD5' }]}>
-            <Ionicons name="calendar" size={22} color="#F59E0B" />
-          </View>
-          <Typography variant="caption" color="muted" style={{ marginTop: 10, fontSize: 12 }}>Jobs</Typography>
-          <Typography variant="h2" weight="bold" style={{ color: '#F59E0B' }}>128</Typography>
-        </View>
-      </View>
-
-      {/* Pending Requests */}
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Typography variant="h3" weight="bold">New Requests (2)</Typography>
-          <Typography variant="caption" color="primary" weight="bold">See All</Typography>
-        </View>
-        
-        <Card customStyle={styles.requestCard}>
-          <View style={styles.requestHeader}>
-            <View style={styles.requestUser}>
-              <View style={styles.miniAvatar} />
-              <View style={{ marginLeft: 10 }}>
-                <Typography variant="body" weight="bold">Deep Cleaning</Typography>
-                <Typography variant="caption" color="muted">Ayesha Malik • 2.4 km</Typography>
-              </View>
+        {/* Stats Row */}
+        <View style={styles.statsRow}>
+          <View style={[styles.statCard, { backgroundColor: '#EEF2FF' }]}>
+            <View style={styles.statIconWrapper}>
+              <Ionicons name="wallet" size={22} color="#4F46E5" />
             </View>
-            <Typography variant="body" weight="bold" color="primary">Rs. 2500</Typography>
+            <Typography variant="caption" color="muted" style={{ marginTop: 10, fontSize: 12 }}>Earnings</Typography>
+            <Typography variant="h2" weight="bold" color="primary">Rs. {totalEarnings.toLocaleString()}</Typography>
           </View>
-          <View style={styles.requestActions}>
-            <TouchableOpacity style={styles.declineBtn}>
-              <Typography variant="caption" weight="bold">Decline</Typography>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.acceptBtn}>
-              <Typography variant="caption" color="inverse" weight="bold">Accept Job</Typography>
-            </TouchableOpacity>
-          </View>
-        </Card>
-      </View>
-
-      {/* Active Jobs */}
-      <View style={styles.section}>
-        <Typography variant="h3" weight="bold" style={{ marginBottom: 16 }}>Ongoing Tasks</Typography>
-        <Card customStyle={styles.ongoingCard}>
-          <View style={styles.ongoingInfo}>
-            <Ionicons name="time-outline" size={24} color="#4F46E5" />
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <Typography variant="body" weight="bold">AC Repair in Progress</Typography>
-              <Typography variant="caption" color="muted">DHA Phase 6, Sector C</Typography>
+          
+          <View style={[styles.statCard, { backgroundColor: '#ECFDF5' }]}>
+            <View style={[styles.statIconWrapper, { backgroundColor: '#D1FAE5' }]}>
+              <Ionicons name="star" size={22} color="#10B981" />
             </View>
-            <TouchableOpacity style={styles.viewJobBtn}>
-              <Ionicons name="chevron-forward" size={20} color="#FFF" />
-            </TouchableOpacity>
+            <Typography variant="caption" color="muted" style={{ marginTop: 10, fontSize: 12 }}>Rating</Typography>
+            <Typography variant="h2" weight="bold" color="secondary">4.9/5</Typography>
           </View>
-        </Card>
-      </View>
 
-      <TouchableOpacity 
-        style={styles.postServiceBtn}
-        onPress={() => router.push('/provider/add-service')}
-      >
-        <LinearGradient
-          colors={['#4F46E5', '#3730A3']}
-          style={styles.gradientBtn}
+          <View style={[styles.statCard, { backgroundColor: '#FFF7ED' }]}>
+            <View style={[styles.statIconWrapper, { backgroundColor: '#FFEDD5' }]}>
+              <Ionicons name="calendar" size={22} color="#F59E0B" />
+            </View>
+            <Typography variant="caption" color="muted" style={{ marginTop: 10, fontSize: 12 }}>Jobs</Typography>
+            <Typography variant="h2" weight="bold" style={{ color: '#F59E0B' }}>{completedJobsCount}</Typography>
+          </View>
+        </View>
+
+        {/* Pending Requests */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Typography variant="h3" weight="bold">New Requests ({pendingRequests.length})</Typography>
+          </View>
+          
+          {loadingProviderBookings ? (
+            <ActivityIndicator size="small" color={THEME.colors.primary} />
+          ) : pendingRequests.length > 0 ? (
+            pendingRequests.map((booking) => (
+              <Card key={booking.id} customStyle={[styles.requestCard, { marginBottom: 12 }]}>
+                <View style={styles.requestHeader}>
+                  <View style={styles.requestUser}>
+                    {booking.userPhotoURL ? (
+                      <Image source={{ uri: booking.userPhotoURL }} style={styles.cardProviderAvatar} />
+                    ) : (
+                      <View style={[styles.cardProviderAvatar, { backgroundColor: THEME.colors.primary + '20', justifyContent: 'center', alignItems: 'center' }]}>
+                        <Typography variant="caption" color="primary" weight="bold">{(booking.userName || 'G').charAt(0).toUpperCase()}</Typography>
+                      </View>
+                    )}
+                    <View style={{ marginLeft: 10, flex: 1 }}>
+                      <Typography variant="body" weight="bold">{booking.serviceName || 'Service'}</Typography>
+                      <Typography variant="caption" color="muted">{booking.userName || 'Customer'} • {booking.date}</Typography>
+                      {booking.status === 'rescheduled' && (
+                        <View style={{ backgroundColor: '#8B5CF620', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginTop: 4, alignSelf: 'flex-start' }}>
+                          <Typography variant="caption" style={{ color: '#8B5CF6', fontSize: 10 }} weight="bold">RESCHEDULED</Typography>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                  <Typography variant="body" weight="bold" color="primary">Rs. {Number(booking.price || 0).toLocaleString()}</Typography>
+                </View>
+                <View style={styles.requestActions}>
+                  <TouchableOpacity style={styles.declineBtn} onPress={() => handleDeclineBooking(booking.id)}>
+                    <Typography variant="caption" weight="bold">Decline</Typography>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.acceptBtn} onPress={() => handleAcceptBooking(booking.id)}>
+                    <Typography variant="caption" color="inverse" weight="bold">Accept Job</Typography>
+                  </TouchableOpacity>
+                </View>
+              </Card>
+            ))
+          ) : (
+            <View style={{ padding: 20, alignItems: 'center', backgroundColor: '#FFF', borderRadius: 20 }}>
+              <Typography variant="body" color="muted">No pending requests.</Typography>
+            </View>
+          )}
+        </View>
+
+        {/* Active Jobs */}
+        <View style={styles.section}>
+          <Typography variant="h3" weight="bold" style={{ marginBottom: 16 }}>Ongoing Tasks ({ongoingTasks.length})</Typography>
+          
+          {loadingProviderBookings ? (
+            <ActivityIndicator size="small" color={THEME.colors.primary} />
+          ) : ongoingTasks.length > 0 ? (
+            ongoingTasks.map((booking) => (
+              <Card key={booking.id} customStyle={[styles.ongoingCard, { marginBottom: 12 }]}>
+                <View style={styles.ongoingInfo}>
+                  <Ionicons name="time-outline" size={24} color="#4F46E5" />
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Typography variant="body" weight="bold">{booking.serviceName || 'Service'}</Typography>
+                    <Typography variant="caption" color="muted">Customer: {booking.userName} • {booking.date}</Typography>
+                  </View>
+                  <TouchableOpacity style={styles.viewJobBtn} onPress={() => handleCompleteBooking(booking.id)}>
+                    <Ionicons name="checkmark-circle-outline" size={22} color="#FFF" />
+                  </TouchableOpacity>
+                </View>
+              </Card>
+            ))
+          ) : (
+            <View style={{ padding: 20, alignItems: 'center', backgroundColor: '#FFF', borderRadius: 20 }}>
+              <Typography variant="body" color="muted">No ongoing tasks.</Typography>
+            </View>
+          )}
+        </View>
+
+        <TouchableOpacity 
+          style={styles.postServiceBtn}
+          onPress={() => router.push('/provider/add-service')}
         >
-          <Ionicons name="add-circle" size={24} color="#FFF" />
-          <Typography variant="body" weight="bold" color="inverse" style={{ marginLeft: 8 }}>
-            Upload New Service
-          </Typography>
-        </LinearGradient>
-      </TouchableOpacity>
-    </>
-  );
+          <LinearGradient
+            colors={['#4F46E5', '#3730A3']}
+            style={styles.gradientBtn}
+          >
+            <Ionicons name="add-circle" size={24} color="#FFF" />
+            <Typography variant="body" weight="bold" color="inverse" style={{ marginLeft: 8 }}>
+              Upload New Service
+            </Typography>
+          </LinearGradient>
+        </TouchableOpacity>
+      </>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>

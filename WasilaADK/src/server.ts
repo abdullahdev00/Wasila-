@@ -5,6 +5,7 @@ import { PlanningAgent } from './agents/PlanningAgent';
 import { MatchmakerAgent } from './agents/MatchmakerAgent';
 import { ConciergeAgent } from './agents/ConciergeAgent';
 import { ActionAgent } from './agents/ActionAgent';
+import { PricingAgent } from './agents/PricingAgent';
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -18,6 +19,7 @@ const parser = new ParserAgent();
 const matchmaker = new MatchmakerAgent();
 const concierge = new ConciergeAgent();
 const actionAgent = new ActionAgent();
+const pricingAgent = new PricingAgent();
 
 // --- IN-MEMORY CHAT STATE ---
 // Stores the last message and provider for each user session without a database
@@ -30,12 +32,15 @@ app.post('/api/chat', async (req, res) => {
     console.log(`\n--- New API Request: "${message}" (User: ${userId}) ---`);
 
     // Fetch user memory
-    const userMemory = chatMemory.get(userId) || { historyText: "", lastProviderId: null };
+    const userMemory = chatMemory.get(userId) || { history: [], lastProviderId: null };
 
     // Inject history context so agents remember the past
+    const historyText = userMemory.history.map((h: any) => `User: "${h.user}" | AI: "${h.ai}"`).join('\n');
     const contextualMessage = `
-      [Recent Memory]: ${userMemory.historyText || 'No previous chat'}
-      [Current Message]: "${message}"
+      [Recent Chat History]:
+      ${historyText || 'No previous chat'}
+      
+      [Current User Message]: "${message}"
     `;
 
     // 1. Parsing Phase (Now memory-aware)
@@ -51,16 +56,26 @@ app.post('/api/chat', async (req, res) => {
       // Use memory to know WHO to book if frontend doesn't send it
       const providerId = req.body.providerId || userMemory.lastProviderId; 
       if (providerId) {
-        actionResult = await actionAgent.executeBooking(message, { providerId, userId: req.body.userId || 'guest' });
+        actionResult = await actionAgent.executeBooking(message, { 
+          providerId, 
+          userId: req.body.userId || 'guest',
+          dateTime: parsed.dateTime 
+        });
         finalReply = actionResult.message || "Aapki booking mukammal ho gayi hai!";
       } else {
         finalReply = "Maazrat, kis provider ko book karna hai ye samajh nahi aaya.";
       }
     } else {
-      // 3. Normal Search / Matchmaking Phase
       if (parsed.category) {
         matchResult = await matchmaker.findMatch(message, parsed.category);
-        console.log("Match Found:", matchResult.bestMatch?.name || "None");
+        if (matchResult?.bestMatch) {
+          const basePrice = matchResult.bestMatch.pricePerHour || 1000;
+          const location = matchResult.bestMatch.location || "Unknown";
+          const quote = await pricingAgent.calculateQuote(basePrice, message, location);
+          matchResult.bestMatch.pricing = quote;
+          matchResult.bestMatch.pricePerHour = quote.total;
+          console.log(`[Pricing Engine] Dynamic quote calculated: ${quote.total} PKR (Base: ${quote.base}, Distance: ${quote.distanceFee}, Urgency: ${quote.urgencyFee})`);
+        }
       }
 
       // 4. Concierge Generation Phase
@@ -78,7 +93,13 @@ app.post('/api/chat', async (req, res) => {
     }
 
     // ALWAYS UPDATE MEMORY AFTER EVERY MESSAGE
-    userMemory.historyText = `User said: "${message}" | AI replied: "${finalReply}"`;
+    if (!userMemory.history) {
+      userMemory.history = [];
+    }
+    userMemory.history.push({ user: message, ai: finalReply });
+    if (userMemory.history.length > 5) {
+      userMemory.history.shift();
+    }
     chatMemory.set(userId, userMemory);
 
     // Return the consolidated response EXACTLY matching the legacy format for the mobile app
