@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, 
   Text,
@@ -243,6 +243,60 @@ const MessageBubble = ({ item }: { item: Message }) => {
   );
 };
 
+const THINKING_STAGES = [
+  { agent: 'ParserAgent', detail: 'Parsing request intent and category...' },
+  { agent: 'MatchmakerAgent', detail: 'Scanning active service providers...' },
+  { agent: 'PricingAgent', detail: 'Evaluating base fee, distance, and surge quote...' },
+  { agent: 'ConciergeAgent', detail: 'Formulating natural language response...' }
+];
+
+const ThinkingTraceLoader = ({ activeStep }: { activeStep: number }) => {
+  return (
+    <View style={styles.loaderWrapper}>
+      <View style={styles.thinkingHeaderLoading}>
+        <Ionicons name="sparkles" size={14} color="#6366F1" style={{ marginRight: 6 }} />
+        <Typography variant="caption" weight="bold" style={{ color: '#6366F1' }}>
+          Wasila AI is thinking...
+        </Typography>
+        <ActivityIndicator size="small" color="#6366F1" style={{ marginLeft: 8 }} />
+      </View>
+      
+      <View style={styles.loaderTraceContainer}>
+        {THINKING_STAGES.map((stage, idx) => {
+          const isDone = idx < activeStep;
+          const isActive = idx === activeStep;
+          const isPending = idx > activeStep;
+          
+          return (
+            <View key={idx} style={[styles.loaderTraceRow, isActive && styles.loaderTraceRowActive]}>
+              <View style={styles.loaderStatusIcon}>
+                {isDone && <Ionicons name="checkmark-circle" size={16} color="#10B981" />}
+                {isActive && <ActivityIndicator size="small" color="#6366F1" style={{ transform: [{ scale: 0.8 }] }} />}
+                {isPending && <Ionicons name="ellipse-outline" size={12} color="#94A3B8" />}
+              </View>
+              <View style={{ flex: 1, marginLeft: 8 }}>
+                <Typography 
+                  variant="caption" 
+                  weight="bold" 
+                  style={{ color: isActive ? '#4F46E5' : isDone ? '#10B981' : '#64748B' }}
+                >
+                  ⚙ {stage.agent}
+                </Typography>
+                <Typography 
+                  variant="caption" 
+                  style={{ color: isActive ? '#0F172A' : '#94A3B8', fontSize: 11 }}
+                >
+                  {stage.detail}
+                </Typography>
+              </View>
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+};
+
 export default function ChatScreen() {
   const { user } = useAuthStore();
   const [inputText, setInputText] = useState('');
@@ -254,6 +308,8 @@ export default function ChatScreen() {
     }
   ]);
   const [isLoading, setIsLoading] = useState(false);
+  const [activeStep, setActiveStep] = useState(0);
+  const flatListRef = useRef<FlatList<any>>(null);
 
   const [providerChats, setProviderChats] = useState<any[]>([]);
   const [loadingChats, setLoadingChats] = useState(false);
@@ -307,6 +363,16 @@ export default function ChatScreen() {
     setMessages(prev => [...prev, userMsg]);
     setInputText('');
     setIsLoading(true);
+    setActiveStep(0);
+
+    const interval = setInterval(() => {
+      setActiveStep(prev => {
+        if (prev < THINKING_STAGES.length - 1) {
+          return prev + 1;
+        }
+        return prev;
+      });
+    }, 1500);
 
     try {
       const response = await fetch(`${API_BASE_URL}/chat`, {
@@ -339,7 +405,9 @@ export default function ChatScreen() {
         isError: true,
       }]);
     } finally {
+      clearInterval(interval);
       setIsLoading(false);
+      setActiveStep(0);
     }
   };
 
@@ -491,11 +559,14 @@ export default function ChatScreen() {
           keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         >
           <FlatList
+            ref={flatListRef}
             data={messages}
             keyExtractor={item => item.id}
             renderItem={({ item }) => <MessageBubble item={item} />}
             contentContainerStyle={styles.chatList}
             showsVerticalScrollIndicator={false}
+            ListFooterComponent={isLoading ? <ThinkingTraceLoader activeStep={activeStep} /> : null}
+            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
           />
 
           <View style={styles.inputContainer}>
@@ -744,5 +815,40 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderTopWidth: 1,
     borderTopColor: '#A7F3D0',
+  },
+  loaderWrapper: {
+    marginBottom: 24,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    ...THEME.shadows.sm,
+  },
+  thinkingHeaderLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  loaderTraceContainer: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+  },
+  loaderTraceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    opacity: 0.5,
+  },
+  loaderTraceRowActive: {
+    opacity: 1,
+  },
+  loaderStatusIcon: {
+    width: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
