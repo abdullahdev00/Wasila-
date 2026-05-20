@@ -7,7 +7,7 @@ import { ConciergeAgent } from './agents/ConciergeAgent';
 import { ActionAgent } from './agents/ActionAgent';
 import { PricingAgent } from './agents/PricingAgent';
 import { SupplierAgent } from './agents/SupplierAgent';
-import { getUserName, fetchUserBookings, db, saveChatSession } from './firebase';
+import { getUserName, fetchUserBookings, db, saveChatSession, fetchLastChatSession } from './firebase';
 import { getDoc, doc, updateDoc } from 'firebase/firestore';
 import { callOpenRouter } from './utils/openRouter';
 
@@ -57,15 +57,46 @@ app.post('/api/chat', async (req, res) => {
     }
 
     // Fetch user memory
-    const userMemory = chatMemory.get(userId) || { 
-      history: [], 
-      lastProviderId: null,
-      chatSessionId: null,
-      fullMessages: [],
-      currentCategory: null,
-      lastProviderUserId: null,
-      lastProviderName: null
-    };
+    let userMemory = chatMemory.get(userId);
+    if (!userMemory) {
+      // Hydrate from Firestore if server restarted
+      const lastSession = await fetchLastChatSession(userId);
+      if (lastSession) {
+        console.log(`[Session Hydration] Hydrating active session ${lastSession.id} for UID ${userId} from Firestore.`);
+        const messages = lastSession.messages || [];
+        const history: any[] = [];
+        
+        // Convert message format back to {user: string, ai: string} history
+        for (let i = 0; i < messages.length; i++) {
+          if (messages[i].sender === 'user' && messages[i+1]?.sender === 'ai') {
+            history.push({
+              user: messages[i].text,
+              ai: messages[i+1].text
+            });
+          }
+        }
+        
+        userMemory = {
+          history: history.slice(-5), // Keep last 5 turns
+          lastProviderId: lastSession.providerId || null,
+          chatSessionId: lastSession.id,
+          fullMessages: messages,
+          currentCategory: lastSession.category || null,
+          lastProviderUserId: lastSession.providerId || null,
+          lastProviderName: lastSession.providerName || null
+        };
+      } else {
+        userMemory = {
+          history: [], 
+          lastProviderId: null,
+          chatSessionId: null,
+          fullMessages: [],
+          currentCategory: null,
+          lastProviderUserId: null,
+          lastProviderName: null
+        };
+      }
+    }
 
     // Inject history context so agents remember the past
     const historyText = userMemory.history.map((h: any) => `User: "${h.user}" | AI: "${h.ai}"`).join('\n');
@@ -242,7 +273,8 @@ app.post('/api/chat', async (req, res) => {
         userAddress: userAddress,
         bookings: userBookings,
         bestMatch: matchResult?.bestMatch, 
-        bookingStatus: parsed.action === 'view_bookings' ? 'LISTING_BOOKINGS' : (matchResult?.bestMatch ? 'PROPOSAL_READY' : 'SEARCHING')
+        bookingStatus: parsed.action === 'view_bookings' ? 'LISTING_BOOKINGS' : (matchResult?.bestMatch ? 'PROPOSAL_READY' : 'SEARCHING'),
+        history: userMemory.history
       };
       const response = await concierge.reply(message, state);
       finalReply = response.reply;
