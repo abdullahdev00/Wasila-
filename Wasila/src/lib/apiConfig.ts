@@ -10,6 +10,6 @@ import Constants from 'expo-constants';
 const debuggerHost = Constants.expoConfig?.hostUri || '';
 const localIp = debuggerHost.split(':').shift() || 'localhost';
 
-export const API_BASE_URL = `http://${localIp}:5000/api`;
+export const API_BASE_URL = 'https://wasila-backend-340241029103.us-central1.run.app/api';
 
 console.log('🔗 Wasila AI Backend connected to:', API_BASE_URL);
