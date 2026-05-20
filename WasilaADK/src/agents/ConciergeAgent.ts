@@ -25,6 +25,11 @@ export class ConciergeAgent {
     `;
 
     const promptText = `
+      [Recent Chat History]:
+      ${state.history && state.history.length > 0 
+        ? state.history.map((h: any) => `User: "${h.user}"\nAI: "${h.ai}"`).join('\n')
+        : 'No previous chat'}
+
       User Query: "${query}"
       User Name: "${state.userName || 'Guest User'}"
       User Address: "${state.userAddress || 'Not set'}"

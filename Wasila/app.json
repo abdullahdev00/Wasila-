@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Wasila",
-    "slug": "Wasila",
+    "slug": "wasila",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -45,6 +45,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "8df50a69-3973-42f6-af77-cc1af4d9b720"
+      }
+    },
+    "owner": "abdullah72052"
   }
 }

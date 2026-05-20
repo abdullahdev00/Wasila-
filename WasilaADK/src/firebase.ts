@@ -1,6 +1,6 @@
 import * as dotenv from 'dotenv';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, query, where, orderBy, limit } from 'firebase/firestore';
 
 dotenv.config();
 
@@ -193,6 +193,30 @@ export async function saveChatSession(
     console.log(`[Firebase Helper] Chat session ${sessionId} saved successfully in Firestore.`);
   } catch (error) {
     console.error(`[saveChatSession] Error saving chat ${sessionId}:`, error);
+  }
+}
+
+export async function fetchLastChatSession(userId: string) {
+  try {
+    const q = query(
+      collection(db, 'chats'),
+      where('userId', '==', userId)
+    );
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      const docs = snap.docs.map(d => d.data());
+      // Sort in memory by updatedAt descending to avoid composite index requirement
+      docs.sort((a, b) => {
+        const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+        const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+        return timeB - timeA;
+      });
+      return docs[0];
+    }
+    return null;
+  } catch (err: any) {
+    console.error(`[fetchLastChatSession] Failed to fetch last chat session for ${userId}:`, err);
+    return null;
   }
 }
 

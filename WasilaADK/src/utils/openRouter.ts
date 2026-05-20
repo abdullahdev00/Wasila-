@@ -41,7 +41,7 @@ export async function callOpenRouter(
     // We allow up to 2 retries per model if we encounter rate limits (429)
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
-        const response = await axios.post(
+        const responsePromise = axios.post(
           endpoint,
           {
             model: modelName,
@@ -60,10 +60,15 @@ export async function callOpenRouter(
               "HTTP-Referer": "https://wasila.ai",
               "X-Title": "Wasila ADK"
             },
-            timeout: 15000, // 15 seconds fail-fast timeout
-            validateStatus: () => true // Allow handling error codes manually in our logic
+            validateStatus: () => true
           }
         );
+
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Request timed out after 15s")), 15000)
+        );
+
+        const response = await Promise.race([responsePromise, timeoutPromise]);
 
         // Handle success
         if (response.status === 200) {
