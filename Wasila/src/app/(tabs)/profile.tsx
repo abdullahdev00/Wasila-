@@ -238,39 +238,6 @@ export default function ProfileScreen() {
             </View>
             <Ionicons name="chevron-forward" size={20} color="#CBD5E1" />
           </TouchableOpacity>
-
-          <TouchableOpacity style={styles.settingRow}>
-            <View style={[styles.settingIcon, { backgroundColor: '#F8FAFC' }]}>
-              <Ionicons name="notifications-outline" size={22} color={THEME.colors.primary} />
-            </View>
-            <View style={styles.settingText}>
-              <Typography variant="body" weight="bold">Notifications</Typography>
-              <Typography variant="caption" color="muted">Push notifications, Alerts</Typography>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#CBD5E1" />
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.settingRow}>
-            <View style={[styles.settingIcon, { backgroundColor: '#F8FAFC' }]}>
-              <Ionicons name="shield-checkmark-outline" size={22} color={THEME.colors.primary} />
-            </View>
-            <View style={styles.settingText}>
-              <Typography variant="body" weight="bold">Security</Typography>
-              <Typography variant="caption" color="muted">Password, Fingerprint</Typography>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#CBD5E1" />
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.settingRow}>
-            <View style={[styles.settingIcon, { backgroundColor: '#F8FAFC' }]}>
-              <Ionicons name="help-circle-outline" size={22} color={THEME.colors.primary} />
-            </View>
-            <View style={styles.settingText}>
-              <Typography variant="body" weight="bold">Help Center</Typography>
-              <Typography variant="caption" color="muted">FAQs, Support</Typography>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#CBD5E1" />
-          </TouchableOpacity>
         </View>
 
         <Button 

@@ -18,14 +18,12 @@ import { Typography } from '../../components/ui/Typography';
 import { Button } from '../../components/ui/Button';
 import { auth } from '../../lib/firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
-import { useGoogleAuth } from '../../hooks/useGoogleAuth';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
-  const { signIn: googleSignIn, loading: googleLoading } = useGoogleAuth();
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -65,7 +63,7 @@ export default function LoginScreen() {
           </View>
 
           <View style={styles.form}>
-            <View style={[styles.inputWrapper, (loading || googleLoading) && styles.disabledInput]}>
+            <View style={[styles.inputWrapper, loading && styles.disabledInput]}>
               <Ionicons name="mail-outline" size={20} color={THEME.colors.textMuted} style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
@@ -74,11 +72,11 @@ export default function LoginScreen() {
                 onChangeText={setEmail}
                 keyboardType="email-address"
                 autoCapitalize="none"
-                editable={!loading && !googleLoading}
+                editable={!loading}
               />
             </View>
 
-            <View style={[styles.inputWrapper, (loading || googleLoading) && styles.disabledInput]}>
+            <View style={[styles.inputWrapper, loading && styles.disabledInput]}>
               <Ionicons name="lock-closed-outline" size={20} color={THEME.colors.textMuted} style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
@@ -86,7 +84,7 @@ export default function LoginScreen() {
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry
-                editable={!loading && !googleLoading}
+                editable={!loading}
               />
             </View>
 
@@ -101,21 +99,25 @@ export default function LoginScreen() {
               isLoading={loading}
             />
 
-            <View style={styles.dividerContainer}>
-              <View style={styles.divider} />
-              <Typography variant="caption" color="muted" style={{ marginHorizontal: 10 }}>OR</Typography>
-              <View style={styles.divider} />
+            <View style={styles.quickLoginContainer}>
+              <Typography variant="caption" color="muted" style={{ marginBottom: 12, textAlign: 'center' }}>
+                Test Credentials
+              </Typography>
+              <View style={styles.quickLoginRow}>
+                <Button 
+                  label="Customer Test" 
+                  variant="outline" 
+                  onPress={() => { setEmail('test@gmail.com'); setPassword('Test123#'); }} 
+                  customStyle={{ flex: 1, marginRight: 8, height: 48 }} 
+                />
+                <Button 
+                  label="Provider Test" 
+                  variant="outline" 
+                  onPress={() => { setEmail('testprovider@gmail.com'); setPassword('Test123#'); }} 
+                  customStyle={{ flex: 1, marginLeft: 8, height: 48 }} 
+                />
+              </View>
             </View>
-
-            <Button
-              label="Continue with Google"
-              variant="outline"
-              onPress={() => googleSignIn()}
-              isLoading={googleLoading}
-              disabled={loading}
-              leftIcon={<Ionicons name="logo-google" size={20} color="#EA4335" />}
-              customStyle={styles.googleBtn}
-            />
           </View>
 
           <View style={styles.footer}>
@@ -185,25 +187,12 @@ const styles = StyleSheet.create({
     borderRadius: THEME.radius.lg,
     ...THEME.shadows.md,
   },
-  dividerContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: THEME.spacing.xl,
+  quickLoginContainer: {
+    marginTop: THEME.spacing.xl,
   },
-  divider: {
-    flex: 1,
-    height: 1,
-    backgroundColor: THEME.colors.border,
-  },
-  googleBtn: {
+  quickLoginRow: {
     flexDirection: 'row',
-    height: 56,
-    borderRadius: THEME.radius.lg,
-    backgroundColor: THEME.colors.surface,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: THEME.colors.border,
+    justifyContent: 'space-between',
   },
   footer: {
     flexDirection: 'row',
