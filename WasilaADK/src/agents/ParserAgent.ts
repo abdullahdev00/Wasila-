@@ -7,15 +7,18 @@ export class ParserAgent {
   async parse(query: string) {
     const instruction = `
       You are the Intent Parser for Wasila. 
-      Extract the following fields from the user's query and context:
-      - category (e.g., Plumber, Electrician, AC Mechanic, Maths Tutor, Painter, Carpenter)
-      - action (search, book, dispute, view_bookings). 
+      Extract the following fields from the user's query AND the chat history context:
+      - action (search, book, dispute, view_bookings, chat, cancel). 
         * Set action to 'view_bookings' if the user is asking to view, list, check, or inquire about their booked services, scheduled jobs, active bookings, or past orders (e.g., "meri bookings dikhao", "mery kya orders hain", "show my bookings", "check my services", "booking check krna").
-        * Set action to 'book' if the user confirms a booking, wants to hire a provider, says "book it", "confirm booking", "book krdo", "booking kar do", "yes", "kar do", "theek hai", "yes please".
+        * Set action to 'book' if the user wants to book or hire a service provider (e.g. "book kr do", "Ac technician book kr do", "booking kar do"), confirms a booking, provides scheduling time/date (e.g. "Tomorrow 5 PM", "shaam 5 baje", "kal do baje"), says "book it", "confirm booking", "yes", "kar do", "theek hai", "yes please", or gives any affirmative/confirmation response (like "hmm", "haan", "ji", "ok", "chalo", "done", "proceed", "go ahead", "sure") ESPECIALLY when the recent chat history shows that the AI previously suggested/asked about booking a provider or asked for the booking time.
+        * Set action to 'cancel' if the user requests to cancel, terminate, delete, abort, or end a booking/reservation, or says something like "booking cancel kr do", "cancel booking", "booking khatam kr do", "cancel my order", "cancel kr do".
+        * Set action to 'chat' if the user is having casual conversation, greeting, asking "how are you", or making small talk that is NOT related to any service request. Examples: "hello", "ksy ho", "thanks", "shukriya".
         * Otherwise set it to 'search'.
-      - dateTime: A string representing any date or time mentioned by the user for scheduling/booking (e.g., "Tomorrow, 3:00 PM", "Today, 5:00 PM"). If the user says "3 bjy" or "teen baje", map it to a standard time like "3:00 PM" (e.g., "Today, 3:00 PM" or "Tomorrow, 3:00 PM" based on context). If the user did not specify any date/time, return null.
-      - location: Any location, city, sector, area, or address details mentioned by the user in their query (e.g., "G-11 Islamabad", "Gulberg Lahore", "DHA Phase 6", "House 45, Street 12"). If the user did not specify any location/address, return null.
+      - dateTime: A string representing any date or time mentioned by the user for scheduling/booking (e.g., "Tomorrow, 3:00 PM", "Today, 5:00 PM"). If the user says "3 bjy" or "teen baje", map it to a standard time like "3:00 PM". If the user did not specify any date/time, return null.
+      - location: Any location, city, sector, area, or address details mentioned by the user in their query. If the user did not specify any location/address, return null.
       - confidence (0-100)
+
+      IMPORTANT: Pay close attention to the [Recent Chat History]. If the AI just asked "should I book X for you?" or offered a service match, and the user responds with ANY short confirmation (even just "hmm", "ok", "haan", "ji"), that means action should be "book".
       
       Return ONLY a JSON object: {"category": string | null, "action": string | null, "dateTime": string | null, "location": string | null, "confidence": number}
     `;

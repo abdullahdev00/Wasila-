@@ -150,6 +150,16 @@ export default function MyServicesScreen() {
 
                 <TouchableOpacity 
                   style={styles.actionBtn}
+                  onPress={() => router.push({ pathname: '/provider/add-service', params: { editId: service.id } })}
+                >
+                  <Ionicons name="create-outline" size={18} color={THEME.colors.primary} />
+                  <Typography variant="caption" weight="bold" style={{ marginLeft: 6 }}>
+                    Edit
+                  </Typography>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={styles.actionBtn}
                   onPress={() => deleteService(service.id)}
                 >
                   <Ionicons name="trash-outline" size={18} color={THEME.colors.error} />

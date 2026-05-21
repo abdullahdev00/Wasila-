@@ -1,11 +1,14 @@
 import { callOpenRouter } from '../utils/openRouter';
 import { fetchProvidersFromFirebase } from '../firebase';
+import { ExternalSearchAgent } from './ExternalSearchAgent';
+
+const externalSearch = new ExternalSearchAgent();
 
 /**
  * Matchmaker Agent using OpenRouter & Direct Firebase Queries
  */
 export class MatchmakerAgent {
-  async findMatch(query: string, category: string) {
+  async findMatch(query: string, category: string, resolvedLocation: string = 'Islamabad') {
     try {
       if (!category) {
         return { bestMatch: null, reasoning: "No category provided." };
@@ -16,19 +19,31 @@ export class MatchmakerAgent {
       const allProviders = await fetchProvidersFromFirebase();
       
       const filteredProviders = allProviders.filter((p: any) => {
-        if (!p.category) return false;
         if (p.isBooked) return false;
         
-        const dbCat = p.category.toLowerCase();
+        const dbCat = (p.category || '').toLowerCase();
+        const dbName = (p.serviceName || p.name || '').toLowerCase();
+        const dbDesc = (p.description || '').toLowerCase();
         const searchCat = cleanedCategory.toLowerCase();
+        const searchQuery = query.toLowerCase();
         
-        return dbCat.includes(searchCat) || searchCat.includes(dbCat) || dbCat.substring(0, 5) === searchCat.substring(0, 5);
+        // Match by category
+        const isCatMatch = dbCat.includes(searchCat) || searchCat.includes(dbCat) || (dbCat.substring(0, 4) === searchCat.substring(0, 4));
+        
+        // Match by service name (e.g. "ac technician" or "plumber")
+        const isNameMatch = dbName.includes(searchCat) || searchCat.includes(dbName) || dbName.includes(searchQuery) || searchQuery.includes(dbName);
+        
+        // Match by description
+        const isDescMatch = dbDesc.includes(searchCat) || dbDesc.includes(searchQuery);
+        
+        return isCatMatch || isNameMatch || isDescMatch;
       });
 
       console.log(`[Matchmaker] Found ${filteredProviders.length} candidate(s) in Firebase.`);
 
       if (filteredProviders.length === 0) {
-        return { bestMatch: null, reasoning: "Bara-e-meharbani apna query wazeh karein, is category ka koi provider available nahi hai." };
+        console.log(`[Matchmaker] No local providers. Delegating to Google Maps search agent for area: ${resolvedLocation}...`);
+        return await externalSearch.searchExternalProviders(cleanedCategory, resolvedLocation);
       }
 
       const instruction = `

@@ -18,7 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import * as ImagePicker from 'expo-image-picker';
-import MapView, { Marker, Region } from 'react-native-maps';
+import { GoogleMaps, AppleMaps } from 'expo-maps';
 import * as Location from 'expo-location';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { THEME } from '../../theme';
@@ -385,25 +385,76 @@ export default function ProfileScreen() {
             <Typography variant="h3">Pick Shop Location</Typography>
             <View style={{ width: 40 }} />
           </View>
+
+          {/* User notice for Expo Go Google Maps authentication */}
+          <View style={styles.mapInfoCard}>
+            <Ionicons name="information-circle-outline" size={20} color="#B45309" style={{ marginRight: 8 }} />
+            <Typography variant="caption" style={{ flex: 1, color: '#92400E', fontSize: 11 }} weight="medium">
+              Expo Go me package name signature restrict hone ki wajah se map blank ho sakta hai. Aap niche <Typography variant="caption" weight="bold" style={{ color: '#92400E' }}>Use Current Location</Typography> dabba kar location auto-fetch kar sakte hain.
+            </Typography>
+          </View>
           
-          <MapView
-            style={styles.map}
-            initialRegion={{
-              latitude: location?.latitude || 33.6844,
-              longitude: location?.longitude || 73.0479,
-              latitudeDelta: 0.0922,
-              longitudeDelta: 0.0421,
-            }}
-            onPress={(e) => setLocation(e.nativeEvent.coordinate)}
-          >
-            {location && (
-              <Marker 
-                coordinate={location} 
-                draggable 
-                onDragEnd={(e) => setLocation(e.nativeEvent.coordinate)}
-              />
-            )}
-          </MapView>
+          {Platform.OS === 'android' ? (
+            <GoogleMaps.View
+              style={styles.map}
+              cameraPosition={{
+                coordinates: {
+                  latitude: location?.latitude || 33.6844,
+                  longitude: location?.longitude || 73.0479,
+                },
+                zoom: 12,
+              }}
+              markers={
+                location
+                  ? [
+                      {
+                        id: 'shop-marker',
+                        coordinates: location,
+                        title: 'Shop Location',
+                      },
+                    ]
+                  : []
+              }
+              onMapClick={(e) => {
+                if (e.coordinates.latitude !== undefined && e.coordinates.longitude !== undefined) {
+                  setLocation({
+                    latitude: e.coordinates.latitude,
+                    longitude: e.coordinates.longitude,
+                  });
+                }
+              }}
+            />
+          ) : (
+            <AppleMaps.View
+              style={styles.map}
+              cameraPosition={{
+                coordinates: {
+                  latitude: location?.latitude || 33.6844,
+                  longitude: location?.longitude || 73.0479,
+                },
+                zoom: 12,
+              }}
+              markers={
+                location
+                  ? [
+                      {
+                        id: 'shop-marker',
+                        coordinates: location,
+                        title: 'Shop Location',
+                      },
+                    ]
+                  : []
+              }
+              onMapClick={(e) => {
+                if (e.coordinates.latitude !== undefined && e.coordinates.longitude !== undefined) {
+                  setLocation({
+                    latitude: e.coordinates.latitude,
+                    longitude: e.coordinates.longitude,
+                  });
+                }
+              }}
+            />
+          )}
 
           {/* Coordinates Display */}
           <View style={styles.coordsContainer}>
@@ -621,7 +672,7 @@ const styles = StyleSheet.create({
   },
   map: {
     width: '100%',
-    height: 350,
+    height: 320,
     borderRadius: 12,
     backgroundColor: '#f0f0f0',
   },
@@ -639,5 +690,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#6c757d',
     fontFamily: 'Outfit-Medium',
+  },
+  mapInfoCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginHorizontal: 16,
+    marginVertical: 10,
   },
 });

@@ -10,7 +10,10 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   Alert,
-  Image
+  Image,
+  Modal,
+  ScrollView,
+  Linking
 } from 'react-native';
 import { db } from '../../lib/firebase';
 import { doc, getDoc, collection, addDoc, query, where, onSnapshot } from 'firebase/firestore';
@@ -26,7 +29,22 @@ import { API_BASE_URL } from '../../lib/apiConfig';
 import { useAuthStore } from '../../store/useAuthStore';
 
 type Trace = { agent: string; step: string; detail: any };
-type ProviderMatch = { id?: string; name: string; providerName?: string; rating: number; pricePerHour: number; location: string; category: string; skills?: string[]; finalScore?: number };
+type ProviderMatch = { 
+  id?: string; 
+  name: string; 
+  providerName?: string; 
+  rating: number; 
+  pricePerHour: number; 
+  location: string; 
+  category: string; 
+  skills?: string[]; 
+  finalScore?: number;
+  negotiatedDateTime?: string;
+  negotiatedStatus?: string;
+  negotiationTraces?: string[];
+  isExternal?: boolean;
+  phone?: string;
+};
 
 type Message = {
   id: string;
@@ -36,6 +54,7 @@ type Message = {
   bestMatch?: ProviderMatch;
   workplan?: string[];
   isError?: boolean;
+  bookingConfirmed?: boolean;
 };
 
 const renderFormattedText = (text: string) => {
@@ -50,17 +69,21 @@ const renderFormattedText = (text: string) => {
         </Text>
       );
     }
-    return part;
+    return <Text key={index}>{part}</Text>;
   });
 };
 
 const MessageBubble = ({ item }: { item: Message }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isBookingLoading, setIsBookingLoading] = useState(false);
+  const [showSlotSheet, setShowSlotSheet] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string>('Tomorrow');
+  const [selectedSlot, setSelectedSlot] = useState<string>('11:00 AM - 01:00 PM');
+  
   const isUser = item.sender === 'user';
   const { user } = useAuthStore();
 
-  const handleBookNow = async () => {
+  const handleBookNow = () => {
     if (!user) {
       Alert.alert(
         "Login Required",
@@ -78,66 +101,61 @@ const MessageBubble = ({ item }: { item: Message }) => {
       return;
     }
 
-    Alert.alert(
-      "Confirm Booking",
-      `Are you sure you want to book "${item.bestMatch.name}"?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        { 
-          text: "Confirm", 
-          onPress: async () => {
-            try {
-              setIsBookingLoading(true);
-              // Fetch full service details from firestore
-              const serviceSnap = await getDoc(doc(db, 'services', item.bestMatch.id!));
-              if (!serviceSnap.exists()) {
-                setIsBookingLoading(false);
-                Alert.alert("Error", "Service details not found in database.");
-                return;
-              }
-              const serviceData = serviceSnap.data();
+    setShowSlotSheet(true);
+  };
 
-              const bookingsCol = collection(db, 'bookings');
-              const newBooking = {
-                userId: user.uid,
-                userName: user.name || 'Guest User',
-                userPhotoURL: user.photoURL || '',
-                serviceId: item.bestMatch.id,
-                serviceName: serviceData.name || item.bestMatch.name,
-                category: serviceData.category || item.bestMatch.category || 'General',
-                price: item.bestMatch.pricePerHour || serviceData.price || 0,
-                providerId: serviceData.providerId || item.bestMatch.id,
-                providerName: serviceData.providerName || item.bestMatch.name,
-                providerPhotoURL: serviceData.providerPhotoURL || '',
-                status: 'pending',
-                date: item.bestMatch.negotiatedDateTime || 'Tomorrow, 10:00 AM',
-                timestamp: new Date().toISOString(),
-                notes: 'Booking created via AI search suggestion card.'
-              };
+  const confirmBookingWithSlot = async () => {
+    const match = item.bestMatch;
+    if (!match || !match.id || !user) return;
 
-              console.log("[Chat Match Booking] Creating booking:", newBooking);
-              await addDoc(bookingsCol, newBooking);
-              
-              setIsBookingLoading(false);
-              Alert.alert(
-                "Booking Confirmed!",
-                `Your booking has been successfully created.`,
-                [{ text: "OK", onPress: () => router.replace('/(tabs)/bookings') }]
-              );
-            } catch (error: any) {
-              setIsBookingLoading(false);
-              console.error("Error creating match booking:", error);
-              Alert.alert("Booking Failed", error.message);
-            }
-          }
-        }
-      ]
-    );
+    try {
+      setIsBookingLoading(true);
+      setShowSlotSheet(false);
+
+      const serviceSnap = await getDoc(doc(db, 'services', match.id));
+      if (!serviceSnap.exists()) {
+        setIsBookingLoading(false);
+        Alert.alert("Error", "Service details not found in database.");
+        return;
+      }
+      const serviceData = serviceSnap.data();
+
+      const bookingsCol = collection(db, 'bookings');
+      const newBooking = {
+        userId: user.uid,
+        userName: user.name || 'Guest User',
+        userPhotoURL: user.photoURL || '',
+        serviceId: match.id,
+        serviceName: serviceData.name || match.name,
+        category: serviceData.category || match.category || 'General',
+        price: match.pricePerHour || serviceData.price || 0,
+        providerId: serviceData.providerId || match.id,
+        providerName: serviceData.providerName || match.name,
+        providerPhotoURL: serviceData.providerPhotoURL || '',
+        status: 'pending',
+        date: `${selectedDate}, ${selectedSlot}`,
+        timestamp: new Date().toISOString(),
+        notes: 'Booking created via AI search suggestion card.'
+      };
+
+      console.log("[Chat Match Booking] Creating booking with slot:", newBooking);
+      await addDoc(bookingsCol, newBooking);
+      
+      setIsBookingLoading(false);
+      Alert.alert(
+        "Booking Confirmed!",
+        `Your booking for ${selectedDate} at ${selectedSlot} has been successfully created.`,
+        [{ text: "OK", onPress: () => router.replace('/(tabs)/bookings') }]
+      );
+    } catch (error: any) {
+      setIsBookingLoading(false);
+      console.error("Error creating match booking:", error);
+      Alert.alert("Booking Failed", error.message);
+    }
   };
 
   return (
     <View style={[styles.messageWrapper, isUser ? styles.messageWrapperUser : styles.messageWrapperAI]}>
-      {/* Thinking Traces (Above the reply for AI) */}
       {!isUser && item.traces && (
         <View style={styles.thinkingWrapper}>
           <TouchableOpacity 
@@ -167,12 +185,12 @@ const MessageBubble = ({ item }: { item: Message }) => {
                       {trace}
                     </Typography>
                   ) : (
-                    <>
+                    <View key={i}>
                       <Typography variant="caption" weight="bold" style={{ color: '#4F46E5' }}>⚙ {trace.agent}</Typography>
                       <Typography variant="caption" color="muted">
                         {typeof trace.detail === 'object' ? (trace.detail?.reasoning || trace.detail?.category || JSON.stringify(trace.detail).substring(0, 100)) : String(trace.detail)}
                       </Typography>
-                    </>
+                    </View>
                   )}
                 </View>
               ))}
@@ -181,64 +199,175 @@ const MessageBubble = ({ item }: { item: Message }) => {
         </View>
       )}
 
-      {/* Main Message Bubble */}
-      {isUser ? (
-        <LinearGradient
-          colors={['#4F46E5', '#3730A3']}
-          style={[styles.bubble, styles.userBubble]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-        >
-          <Typography color="inverse" variant="body">
-            {renderFormattedText(item.text)}
-          </Typography>
-        </LinearGradient>
-      ) : (
-        <View style={[styles.bubble, styles.aiBubble, item.isError && styles.errorBubble]}>
-          <Typography color={item.isError ? "error" : "main"} variant="body">
-            {renderFormattedText(item.text)}
-          </Typography>
-        </View>
-      )}
+      <View style={[styles.bubble, isUser ? styles.userBubble : styles.aiBubble, item.isError && styles.errorBubble]}>
+        <Typography variant="body" style={{ color: isUser ? '#FFFFFF' : '#1E293B' }}>
+          {renderFormattedText(item.text)}
+        </Typography>
+      </View>
 
-      {/* Best Match Card (Below the reply) */}
       {!isUser && item.bestMatch && (
         <Card customStyle={styles.matchCard}>
+          {item.bestMatch.isExternal && (
+            <View style={{ backgroundColor: '#EEF2FF', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, alignSelf: 'flex-start', marginBottom: 8, borderWidth: 1, borderColor: '#C7D2FE' }}>
+              <Typography variant="caption" style={{ color: '#4F46E5', fontWeight: 'bold' }}>📍 Google Maps Search Listing</Typography>
+            </View>
+          )}
           <Typography variant="h3" color="primary" weight="bold">{item.bestMatch.name}</Typography>
           {item.bestMatch.providerName && (
             <Typography variant="body" weight="medium" style={{ marginTop: 2, marginBottom: 4, color: '#4B5563' }}>
               by {item.bestMatch.providerName}
             </Typography>
           )}
-          <Typography variant="caption" color="muted">⭐ {item.bestMatch.rating} • {item.bestMatch.category}</Typography>
+          <Typography variant="caption" color="muted">★ {item.bestMatch.rating || '5.0'} • {item.bestMatch.category}</Typography>
           {item.bestMatch.location && (
             <Typography variant="caption" color="muted">📍 {item.bestMatch.location}</Typography>
           )}
           
-          <View style={styles.pricingBox}>
-            <Typography variant="body" weight="bold">
-              Rate: Rs. {item.bestMatch.pricePerHour ? `${item.bestMatch.pricePerHour}/hr` : 'Dynamic'}
-            </Typography>
-            {item.bestMatch.skills && (
-              <Typography variant="caption" color="muted" style={{ marginTop: 4 }}>
-                Skills: {item.bestMatch.skills.join(', ')}
-              </Typography>
-            )}
-          </View>
+          <View style={styles.divider} />
 
-          <TouchableOpacity 
-            style={[styles.bookNowBtn, isBookingLoading && { backgroundColor: '#CBD5E1' }]} 
-            onPress={handleBookNow}
-            disabled={isBookingLoading}
-          >
-            {isBookingLoading ? (
-              <ActivityIndicator color="#FFFFFF" size="small" />
-            ) : (
-              <Typography color="inverse" weight="bold">Book Now</Typography>
-            )}
-          </TouchableOpacity>
+          {item.bestMatch.isExternal ? (
+            <View style={styles.pricingBox}>
+              <Typography variant="body" weight="bold" style={{ color: '#0F172A' }}>
+                Estimated Price: Rs. {item.bestMatch.pricePerHour || 1500}
+              </Typography>
+              {item.bestMatch.phone && (
+                <Typography variant="body" style={{ marginTop: 6, color: '#4F46E5', fontWeight: 'bold' }}>
+                  📞 {item.bestMatch.phone}
+                </Typography>
+              )}
+            </View>
+          ) : (
+            <View style={styles.pricingBox}>
+              <Typography variant="body" weight="bold">
+                Price: Rs. {item.bestMatch.pricePerHour ? `${item.bestMatch.pricePerHour}` : 'Dynamic'}
+              </Typography>
+              {item.bestMatch.skills && (
+                <Typography variant="caption" color="muted" style={{ marginTop: 4 }}>
+                  Skills: {item.bestMatch.skills.join(', ')}
+                </Typography>
+              )}
+            </View>
+          )}
+
+          {item.bestMatch.isExternal ? (
+            <TouchableOpacity 
+              style={[styles.bookNowBtn, { backgroundColor: '#10B981', flexDirection: 'row', justifyContent: 'center', alignItems: 'center' }]} 
+              onPress={() => {
+                if (item.bestMatch?.phone) {
+                  Linking.openURL(`tel:${item.bestMatch.phone}`);
+                } else {
+                  Alert.alert("Contact Unavailable", "Is provider ka contact number dastyab nahi hai.");
+                }
+              }}
+            >
+              <Ionicons name="call" size={16} color="#FFFFFF" style={{ marginRight: 8 }} />
+              <Typography color="inverse" weight="bold">Call Provider</Typography>
+            </TouchableOpacity>
+          ) : item.bookingConfirmed ? (
+            <View style={[styles.bookNowBtn, { backgroundColor: '#10B981', flexDirection: 'row', justifyContent: 'center', alignItems: 'center' }]}>
+              <Ionicons name="checkmark-circle" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Typography color="inverse" weight="bold">Booked Successfully</Typography>
+            </View>
+          ) : (
+            <TouchableOpacity 
+              style={[styles.bookNowBtn, isBookingLoading && { backgroundColor: '#CBD5E1' }]} 
+              onPress={handleBookNow}
+              disabled={isBookingLoading}
+            >
+              {isBookingLoading ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <Typography color="inverse" weight="bold">Book Now</Typography>
+              )}
+            </TouchableOpacity>
+          )}
         </Card>
       )}
+
+      <Modal
+        visible={showSlotSheet}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowSlotSheet(false)}
+      >
+        <View style={styles.sheetOverlay}>
+          <View style={styles.sheetContent}>
+            <View style={styles.sheetHeader}>
+              <Typography variant="h3" weight="bold">Select Time Slot</Typography>
+              <TouchableOpacity onPress={() => setShowSlotSheet(false)}>
+                <Ionicons name="close" size={24} color="#0F172A" />
+              </TouchableOpacity>
+            </View>
+
+            <Typography variant="body" color="muted" style={{ marginBottom: 16 }}>
+              Choose a date and arrival time slot for {item.bestMatch?.name}
+            </Typography>
+
+            <Typography variant="body" weight="bold" style={{ marginBottom: 10 }}>Select Date</Typography>
+            <View style={styles.dateRow}>
+              {['Today', 'Tomorrow', 'Day After'].map((d) => {
+                const isSel = selectedDate === d;
+                return (
+                  <TouchableOpacity
+                    key={d}
+                    style={[styles.dateTab, isSel && styles.dateTabActive]}
+                    onPress={() => setSelectedDate(d)}
+                  >
+                    <Typography 
+                      variant="body" 
+                      weight="bold" 
+                      style={{ color: isSel ? '#FFFFFF' : '#0F172A' }}
+                    >
+                      {d}
+                    </Typography>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <Typography variant="body" weight="bold" style={{ marginTop: 20, marginBottom: 10 }}>Select Time Slot</Typography>
+            <ScrollView contentContainerStyle={styles.slotsGrid}>
+              {[
+                "09:00 AM - 11:00 AM",
+                "11:00 AM - 01:00 PM",
+                "01:00 PM - 03:00 PM",
+                "03:00 PM - 05:00 PM",
+                "05:00 PM - 07:00 PM"
+              ].map((slot) => {
+                const isSel = selectedSlot === slot;
+                return (
+                  <TouchableOpacity
+                    key={slot}
+                    style={[styles.slotItem, isSel && styles.slotItemActive]}
+                    onPress={() => setSelectedSlot(slot)}
+                  >
+                    <Ionicons 
+                      name="time-outline" 
+                      size={16} 
+                      color={isSel ? '#FFFFFF' : '#4F46E5'} 
+                      style={{ marginRight: 8 }} 
+                    />
+                    <Typography 
+                      variant="body" 
+                      weight="medium" 
+                      style={{ color: isSel ? '#FFFFFF' : '#0F172A' }}
+                    >
+                      {slot}
+                    </Typography>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <TouchableOpacity 
+              style={styles.confirmBtn}
+              onPress={confirmBookingWithSlot}
+            >
+              <Typography color="inverse" weight="bold">Confirm & Book Now</Typography>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -311,9 +440,64 @@ export default function ChatScreen() {
   const [activeStep, setActiveStep] = useState(0);
   const flatListRef = useRef<FlatList<any>>(null);
 
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [userChats, setUserChats] = useState<any[]>([]);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+
   const [providerChats, setProviderChats] = useState<any[]>([]);
   const [loadingChats, setLoadingChats] = useState(false);
   const [selectedChat, setSelectedChat] = useState<any | null>(null);
+
+  // Sync real-time query for customer (user) chats
+  useEffect(() => {
+    if (!user || user.role === 'provider') return;
+
+    const q = query(
+      collection(db, 'chats'),
+      where('userId', '==', user.uid)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const chats = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      // Sort by updatedAt desc
+      chats.sort((a: any, b: any) => {
+        const dateA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+        const dateB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+        return dateB - dateA;
+      });
+      setUserChats(chats);
+    }, (error) => {
+      console.error("Error loading user chats:", error);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // Auto-hydrate screen with the messages of the most recent session on load
+  useEffect(() => {
+    if (userChats.length > 0 && !currentSessionId) {
+      const latest = userChats[0];
+      setCurrentSessionId(latest.id);
+      if (latest.messages && latest.messages.length > 0) {
+        setMessages(latest.messages);
+      }
+    }
+  }, [userChats]);
+
+  const startNewSession = () => {
+    const newId = `chat_${user?.uid || 'guest'}_${Date.now()}`;
+    setCurrentSessionId(newId);
+    setMessages([
+      {
+        id: 'welcome',
+        sender: 'ai',
+        text: 'Assalam o Alaikum! Main Wasila AI Orchestrator hoon. Batayen main aapki kya madad kar sakta hoon?',
+      }
+    ]);
+  };
 
   // Sync real-time query for provider chats
   useEffect(() => {
@@ -365,6 +549,11 @@ export default function ChatScreen() {
     setIsLoading(true);
     setActiveStep(0);
 
+    const sessionIdToUse = currentSessionId || `chat_${user?.uid || 'guest'}_${Date.now()}`;
+    if (!currentSessionId) {
+      setCurrentSessionId(sessionIdToUse);
+    }
+
     const interval = setInterval(() => {
       setActiveStep(prev => {
         if (prev < THINKING_STAGES.length - 1) {
@@ -381,7 +570,11 @@ export default function ChatScreen() {
         body: JSON.stringify({ 
           message: userMsg.text,
           userId: user?.uid || 'guest',
-          userName: user?.name || ''
+          userName: user?.name || '',
+          sessionId: sessionIdToUse,
+          location: user?.address || user?.city || '',
+          latitude: user?.latitude || null,
+          longitude: user?.longitude || null
         })
       });
       
@@ -394,6 +587,7 @@ export default function ChatScreen() {
         traces: data.traces,
         bestMatch: data.bestMatch,
         workplan: data.workplan,
+        bookingConfirmed: data.bookingConfirmed,
       };
 
       setMessages(prev => [...prev, aiMsg]);
@@ -495,7 +689,7 @@ export default function ChatScreen() {
             </View>
           )}
 
-          <View style={{ marginLeft: user?.role === 'provider' && selectedChat ? 12 : 0 }}>
+          <View style={{ marginLeft: user?.role === 'provider' && selectedChat ? 12 : 0, flex: 1 }}>
             <Typography variant="h3" weight="bold">
               {user?.role === 'provider' 
                 ? (selectedChat ? selectedChat.userName : 'Agent negotiations')
@@ -509,6 +703,23 @@ export default function ChatScreen() {
               }
             </Typography>
           </View>
+
+          {user?.role !== 'provider' && (
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <TouchableOpacity 
+                style={{ padding: 6, marginRight: 8 }}
+                onPress={startNewSession}
+              >
+                <Ionicons name="add-circle-outline" size={26} color="#4F46E5" />
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={{ padding: 6 }}
+                onPress={() => setShowHistoryModal(true)}
+              >
+                <Ionicons name="time-outline" size={26} color="#4F46E5" />
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       </View>
 
@@ -529,7 +740,7 @@ export default function ChatScreen() {
           ) : (
             <FlatList
               data={providerChats}
-              keyExtractor={item => item.id}
+              keyExtractor={(item, index) => item.id || index.toString()}
               renderItem={renderChatItem}
               contentContainerStyle={{ padding: 20 }}
               showsVerticalScrollIndicator={false}
@@ -561,7 +772,7 @@ export default function ChatScreen() {
           <FlatList
             ref={flatListRef}
             data={messages}
-            keyExtractor={item => item.id}
+            keyExtractor={(item, index) => item.id || index.toString()}
             renderItem={({ item }) => <MessageBubble item={item} />}
             contentContainerStyle={styles.chatList}
             showsVerticalScrollIndicator={false}
@@ -592,6 +803,103 @@ export default function ChatScreen() {
           </View>
         </KeyboardAvoidingView>
       )}
+
+      {/* Past History Modal */}
+      <Modal
+        visible={showHistoryModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowHistoryModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            {/* Header */}
+            <View style={styles.modalHeader}>
+              <Typography variant="h3" weight="bold">Chat History</Typography>
+              <TouchableOpacity onPress={() => setShowHistoryModal(false)}>
+                <Ionicons name="close" size={24} color="#0F172A" />
+              </TouchableOpacity>
+            </View>
+
+            {/* List */}
+            {userChats.length === 0 ? (
+              <View style={styles.modalEmptyState}>
+                <Ionicons name="chatbox-ellipses-outline" size={48} color="#CBD5E1" />
+                <Typography variant="body" color="muted" style={{ marginTop: 12 }}>No previous chats found.</Typography>
+              </View>
+            ) : (
+              <ScrollView contentContainerStyle={styles.modalListContainer}>
+                {userChats.map((chat) => {
+                  const isSelected = chat.id === currentSessionId;
+                  const formattedDate = chat.updatedAt 
+                    ? new Date(chat.updatedAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + 
+                      new Date(chat.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    : '';
+
+                  return (
+                    <TouchableOpacity
+                      key={chat.id}
+                      style={[
+                        styles.historyItem,
+                        isSelected && styles.historyItemActive
+                      ]}
+                      onPress={() => {
+                        setCurrentSessionId(chat.id);
+                        if (chat.messages) {
+                          setMessages(chat.messages);
+                        }
+                        setShowHistoryModal(false);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Typography 
+                            variant="body" 
+                            weight="bold" 
+                            style={{ color: isSelected ? '#4F46E5' : '#0F172A' }}
+                          >
+                            {chat.category?.toUpperCase() || 'GENERAL CHAT'}
+                          </Typography>
+                          <Typography variant="caption" color="muted">
+                            {formattedDate}
+                          </Typography>
+                        </View>
+                        <Typography 
+                          variant="caption" 
+                          color="muted" 
+                          numberOfLines={1} 
+                          style={{ marginTop: 4 }}
+                        >
+                          {chat.lastMessage || 'No messages yet'}
+                        </Typography>
+                      </View>
+                      <Ionicons 
+                        name={isSelected ? "checkmark-circle" : "chevron-forward"} 
+                        size={20} 
+                        color={isSelected ? "#4F46E5" : "#94A3B8"} 
+                        style={{ marginLeft: 12 }} 
+                      />
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+
+            {/* Start New Chat Button */}
+            <TouchableOpacity 
+              style={styles.newChatBtn}
+              onPress={() => {
+                startNewSession();
+                setShowHistoryModal(false);
+              }}
+            >
+              <Ionicons name="add" size={20} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Typography color="inverse" weight="bold">Start New Chat</Typography>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -650,6 +958,7 @@ const styles = StyleSheet.create({
     ...THEME.shadows.sm,
   },
   userBubble: {
+    backgroundColor: '#4F46E5',
     borderBottomRightRadius: 4,
   },
   aiBubble: {
@@ -850,5 +1159,119 @@ const styles = StyleSheet.create({
     width: 20,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.4)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: 40,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  modalListContainer: {
+    paddingBottom: 24,
+  },
+  modalEmptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+  },
+  historyItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderRadius: 16,
+    backgroundColor: '#F8FAFC',
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+  },
+  historyItemActive: {
+    backgroundColor: '#EEF2FF',
+    borderColor: '#C7D2FE',
+  },
+  newChatBtn: {
+    flexDirection: 'row',
+    backgroundColor: '#4F46E5',
+    paddingVertical: 14,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  sheetOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.4)',
+    justifyContent: 'flex-end',
+  },
+  sheetContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: 40,
+  },
+  sheetHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  dateRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  dateTab: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    marginHorizontal: 4,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  dateTabActive: {
+    backgroundColor: '#4F46E5',
+    borderColor: '#4F46E5',
+  },
+  slotsGrid: {
+    paddingBottom: 8,
+  },
+  slotItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  slotItemActive: {
+    backgroundColor: '#4F46E5',
+    borderColor: '#4F46E5',
+  },
+  confirmBtn: {
+    backgroundColor: '#4F46E5',
+    paddingVertical: 14,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 16,
   },
 });

@@ -220,3 +220,14 @@ export async function fetchLastChatSession(userId: string) {
   }
 }
 
+export async function cancelBooking(bookingId: string): Promise<void> {
+  try {
+    const bookingRef = doc(db, 'bookings', bookingId);
+    console.log(`[Firebase Helper] Cancelling booking ID: ${bookingId}`);
+    await updateDoc(bookingRef, { status: 'cancelled' });
+  } catch (err) {
+    console.error(`[cancelBooking] Failed to cancel booking ID ${bookingId}:`, err);
+    throw err;
+  }
+}
+

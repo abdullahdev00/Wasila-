@@ -20,12 +20,12 @@ export async function callOpenRouter(
     throw new Error("GEMINI_API_KEY is not defined in the environment variables.");
   }
 
-  // Model hierarchy: start with auto free router, then specific free models, and finally cheap paid Gemini
+  // Model hierarchy: Gemini first (fast + reliable), free models as fallback
   const modelPipeline = [
-    "openrouter/free",
+    "google/gemini-2.5-flash",  // Primary: fast, reliable, ultra-cheap ($0.00007/req)
     "meta-llama/llama-3.3-70b-instruct:free",
     "meta-llama/llama-3.2-3b-instruct:free",
-    "google/gemini-2.5-flash" // Safe, ultra-cheap fallback ($0.00007 / request) to guarantee 100% uptime
+    "openrouter/free"           // Last resort free router
   ];
 
   // If the caller explicitly passed a model, prioritize it at the top of the pipeline
