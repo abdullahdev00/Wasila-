@@ -1,0 +1,8 @@
+[accessibility]
+screen_reader = True
+[core]
+account = webdesignershub00@gmail.com
+disable_usage_reporting = False
+project = forex-platform-69a74
+
+Your active configuration is: [default]

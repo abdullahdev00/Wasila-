@@ -1,0 +1,20 @@
+npm warn exec The following package was not found and will be installed: tsx@4.22.3
+
+node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'firebase' imported from C:\Users\Mohammad Ahmad\.gemini\antigravity\scratch\update_rating.js
+    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:255:9)
+    at packageResolve (node:internal/modules/esm/resolve:767:81)
+    at moduleResolve (node:internal/modules/esm/resolve:853:18)
+    at defaultResolve (node:internal/modules/esm/resolve:983:11)
+    at nextResolve (node:internal/modules/esm/hooks:748:28)
+    at resolveBase (file:///C:/Users/Mohammad%20Ahmad/AppData/Local/npm-cache/_npx/fd45a72a545557e9/node_modules/tsx/dist/register-D_B8UL5H.mjs:2:8037)
+    at resolveDirectory (file:///C:/Users/Mohammad%20Ahmad/AppData/Local/npm-cache/_npx/fd45a72a545557e9/node_modules/tsx/dist/register-D_B8UL5H.mjs:2:9124)
+    at resolveTsPaths (file:///C:/Users/Mohammad%20Ahmad/AppData/Local/npm-cache/_npx/fd45a72a545557e9/node_modules/tsx/dist/register-D_B8UL5H.mjs:2:10581)
+    at resolve2 (file:///C:/Users/Mohammad%20Ahmad/AppData/Local/npm-cache/_npx/fd45a72a545557e9/node_modules/tsx/dist/register-D_B8UL5H.mjs:2:11864)
+    at nextResolve (node:internal/modules/esm/hooks:748:28) {
+  code: 'ERR_MODULE_NOT_FOUND'
+}
+
+Node.js v22.18.0

@@ -1,0 +1,8 @@
+Successfully scheduled one-shot timer.
+Expected to fire at: 2026-05-20T22:36:52+05:00
+Prompt: Check if the Cloud Build task has finished (round 2)
+
+[2026-05-20T22:36:02+05:00] Still waiting. Remaining time: 50s
+[2026-05-20T22:36:12+05:00] Still waiting. Remaining time: 40s
+[2026-05-20T22:36:22+05:00] Still waiting. Remaining time: 30s
+[2026-05-20T22:36:25+05:00] Timer cancelled: agent received a message during wait.

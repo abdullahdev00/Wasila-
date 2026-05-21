@@ -1,0 +1,8 @@
+Deploying container to Cloud Run service [wasila-backend] in project [forex-platform-69a74] region [us-central1]
+Deploying...
+Setting IAM Policy..................................done
+Creating Revision.....................................................................................................................................................................................................................................................................................................................................................................................done
+Routing traffic.....done
+Done.
+Service [wasila-backend] revision [wasila-backend-00002-mll] has been deployed and is serving 100 percent of traffic.
+Service URL: https://wasila-backend-340241029103.us-central1.run.app

@@ -1,0 +1,10 @@
+Successfully scheduled one-shot timer.
+Expected to fire at: 2026-05-20T22:37:55+05:00
+Prompt: Check status of Cloud Run deployment
+
+[2026-05-20T22:37:05+05:00] Still waiting. Remaining time: 50s
+[2026-05-20T22:37:15+05:00] Still waiting. Remaining time: 40s
+[2026-05-20T22:37:25+05:00] Still waiting. Remaining time: 30s
+[2026-05-20T22:37:35+05:00] Still waiting. Remaining time: 20s
+[2026-05-20T22:37:45+05:00] Still waiting. Remaining time: 10s
+[2026-05-20T22:37:55+05:00] Timer fired.
