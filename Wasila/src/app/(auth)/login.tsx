@@ -103,18 +103,18 @@ export default function LoginScreen() {
               <Typography variant="caption" color="muted" style={{ marginBottom: 12, textAlign: 'center' }}>
                 Test Credentials
               </Typography>
-              <View style={styles.quickLoginRow}>
+              <View style={styles.quickLoginCol}>
                 <Button 
                   label="Customer Test" 
                   variant="outline" 
                   onPress={() => { setEmail('test@gmail.com'); setPassword('Test123#'); }} 
-                  customStyle={{ flex: 1, marginRight: 8, height: 48 }} 
+                  customStyle={{ height: 48, marginBottom: 12 }} 
                 />
                 <Button 
                   label="Provider Test" 
                   variant="outline" 
                   onPress={() => { setEmail('testprovider@gmail.com'); setPassword('Test123#'); }} 
-                  customStyle={{ flex: 1, marginLeft: 8, height: 48 }} 
+                  customStyle={{ height: 48 }} 
                 />
               </View>
             </View>
@@ -190,9 +190,8 @@ const styles = StyleSheet.create({
   quickLoginContainer: {
     marginTop: THEME.spacing.xl,
   },
-  quickLoginRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  quickLoginCol: {
+    flexDirection: 'column',
   },
   footer: {
     flexDirection: 'row',
