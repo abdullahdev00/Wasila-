@@ -8,7 +8,7 @@ import { ActionAgent } from './agents/ActionAgent';
 import { PricingAgent } from './agents/PricingAgent';
 import { SupplierAgent } from './agents/SupplierAgent';
 import { getUserName, fetchUserBookings, db, saveChatSession, fetchLastChatSession } from './firebase';
-import { getDoc, doc, updateDoc } from 'firebase/firestore';
+import { getDoc, doc, setDoc, updateDoc } from 'firebase/firestore/lite';
 import { callOpenRouter } from './utils/openRouter';
 
 const app = express();
@@ -206,9 +206,9 @@ app.post('/api/chat', async (req, res) => {
     // Auto-update user profile address if not set, but user specified it in chat
     if (userId && userId !== 'guest' && !userId.startsWith('test-user-') && !userAddress && parsed.location) {
       try {
-        await updateDoc(doc(db, 'users', userId), {
+        await setDoc(doc(db, 'users', userId), {
           address: parsed.location
-        });
+        }, { merge: true });
         console.log(`[User Profile Auto-Update] Automatically updated address to '${parsed.location}' for UID '${userId}'`);
         userAddress = parsed.location;
       } catch (updateErr) {
@@ -229,11 +229,15 @@ app.post('/api/chat', async (req, res) => {
     // Detect if category changed to start a fresh chat session
     if (parsed.category) {
       if (!userMemory.currentCategory || userMemory.currentCategory !== parsed.category) {
-        userMemory.chatSessionId = `chat_${userId}_${Date.now()}`;
-        userMemory.fullMessages = [];
+        console.log(`[Category Change] Resetting provider memory from category '${userMemory.currentCategory}' to '${parsed.category}'`);
         userMemory.currentCategory = parsed.category;
+        userMemory.lastProviderId = null;
+        userMemory.lastMatch = null;
+        userMemory.lastProviderUserId = null;
+        userMemory.lastProviderName = null;
       }
     }
+
 
     // Push the user message
     userMemory.fullMessages.push({
@@ -246,6 +250,7 @@ app.post('/api/chat', async (req, res) => {
     let actionResult = null;
     let finalReply = "";
     let userBookings = null;
+    let finalBestMatch: any = null;
 
     // 2. Check if this is a booking confirmation action
     if (parsed.action && parsed.action.toLowerCase() === 'book') {
@@ -253,19 +258,21 @@ app.post('/api/chat', async (req, res) => {
       const providerId = req.body.providerId || userMemory.lastProviderId; 
       
       if (providerId) {
-        // We already know the provider. Check if time is specified!
-        if (parsed.dateTime) {
+        finalBestMatch = userMemory.lastMatch || null;
+        // Check if time is specified in this message, or fall back to previous negotiated time
+        const resolvedTime = parsed.dateTime || (userMemory.lastMatch ? userMemory.lastMatch.negotiatedDateTime : null);
+        if (resolvedTime) {
           actionResult = await actionAgent.executeBooking(message, { 
             providerId, 
             userId: req.body.userId || 'guest',
-            dateTime: parsed.dateTime 
+            dateTime: resolvedTime 
           });
           finalReply = actionResult.message || "Aapki booking mukammal ho gayi hai!";
         } else {
           // Provider exists but no time. Ask the user for the time!
           const state = { 
             userName, userAddress, 
-            bestMatch: userMemory.lastMatch || null,
+            bestMatch: finalBestMatch,
             bookingStatus: 'NEED_TIME', history: userMemory.history
           };
           const response = await concierge.reply(message, state);
@@ -280,6 +287,7 @@ app.post('/api/chat', async (req, res) => {
           matchResult = await matchmaker.findMatch(message, categoryToSearch, resolvedLocation);
           
           if (matchResult?.bestMatch) {
+            finalBestMatch = matchResult.bestMatch;
             if (matchResult.bestMatch.isExternal) {
               matchResult.bestMatch.negotiatedDateTime = parsed.dateTime || 'Today';
               matchResult.bestMatch.negotiatedStatus = 'accepted';
@@ -335,7 +343,7 @@ app.post('/api/chat', async (req, res) => {
               console.log(`[Auto-Book Flow] Best match found but NO time specified. Asking user for time...`);
               const state = { 
                 userName, userAddress, 
-                bestMatch: matchResult.bestMatch,
+                bestMatch: finalBestMatch,
                 bookingStatus: 'NEED_TIME', history: userMemory.history
               };
               const response = await concierge.reply(message, state);
@@ -343,6 +351,7 @@ app.post('/api/chat', async (req, res) => {
             }
           } else {
             // No provider found for this category
+            finalBestMatch = null;
             const state = { 
               userName, userAddress, bestMatch: null,
               bookingStatus: 'NO_MATCH', history: userMemory.history
@@ -352,8 +361,9 @@ app.post('/api/chat', async (req, res) => {
           }
         } else {
           // No category and no provider — ask the user what they want
+          finalBestMatch = null;
           const state = { 
-            userName, userAddress, bestMatch: userMemory.lastMatch || null,
+            userName, userAddress, bestMatch: null,
             bookingStatus: 'NO_PROVIDER', history: userMemory.history
           };
           const response = await concierge.reply(message, state);
@@ -371,13 +381,15 @@ app.post('/api/chat', async (req, res) => {
         userMemory.lastMatch = null;
       }
       finalReply = actionResult.message || "Aapki booking cancel ho gayi hai!";
+      finalBestMatch = null;
     } else if (parsed.action && parsed.action.toLowerCase() === 'chat') {
       // Pure casual conversation — skip matchmaking entirely
+      finalBestMatch = null;
       const state = { 
         userName: userName,
         userAddress: userAddress,
         bookings: null,
-        bestMatch: userMemory.lastMatch || null,
+        bestMatch: null,
         bookingStatus: 'CHATTING',
         history: userMemory.history
       };
@@ -490,6 +502,15 @@ app.post('/api/chat', async (req, res) => {
             matchResult.bestMatch.negotiatedStatus = currentStatus;
             matchResult.bestMatch.negotiationTraces = negotiationTraces;
           }
+          finalBestMatch = matchResult.bestMatch;
+        } else {
+          finalBestMatch = null;
+        }
+      } else {
+        if (parsed.action === 'book' || (parsed.action === 'search' && !parsed.category)) {
+          finalBestMatch = userMemory.lastMatch || null;
+        } else {
+          finalBestMatch = null;
         }
       }
 
@@ -498,8 +519,8 @@ app.post('/api/chat', async (req, res) => {
         userName: userName,
         userAddress: userAddress,
         bookings: userBookings,
-        bestMatch: matchResult?.bestMatch || userMemory.lastMatch || null, 
-        bookingStatus: parsed.action === 'view_bookings' ? 'LISTING_BOOKINGS' : (matchResult?.bestMatch ? 'PROPOSAL_READY' : 'SEARCHING'),
+        bestMatch: finalBestMatch, 
+        bookingStatus: parsed.action === 'view_bookings' ? 'LISTING_BOOKINGS' : (finalBestMatch ? 'PROPOSAL_READY' : 'SEARCHING'),
         history: userMemory.history
       };
       const response = await concierge.reply(message, state);
@@ -522,7 +543,6 @@ app.post('/api/chat', async (req, res) => {
     }
 
     const bookingConfirmed = !!(parsed.action?.toLowerCase() === 'book' && actionResult && actionResult.status === "success");
-    const finalBestMatch = matchResult?.bestMatch || userMemory.lastMatch || null;
 
     // Push the AI message
     userMemory.fullMessages.push({

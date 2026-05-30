@@ -1,6 +1,6 @@
 import * as dotenv from 'dotenv';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, query, where, orderBy, limit } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, query, where, orderBy, limit } from 'firebase/firestore/lite';
 
 dotenv.config();
 

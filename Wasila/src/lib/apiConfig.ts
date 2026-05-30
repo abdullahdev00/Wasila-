@@ -6,7 +6,7 @@ import Constants from 'expo-constants';
  * - Production APK      → connects to hosted Cloud Run backend
  */
 
-const PRODUCTION_URL = 'https://wasila-backend-340241029103.us-central1.run.app/api';
+const PRODUCTION_URL = 'https://wasila-backend-546907715054.us-central1.run.app/api';
 
 // Expo injects hostUri only in dev mode (e.g. "192.168.1.27:8081")
 const debuggerHost = Constants.expoConfig?.hostUri || '';

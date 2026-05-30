@@ -10,6 +10,10 @@ build/
 .env
 .env.local
 .env.*
+service-account-key.json
+seed-new-database.ts
+seed-new-database-admin.ts
+seed-new-from-old.ts
 
 # Logs
 npm-debug.log*

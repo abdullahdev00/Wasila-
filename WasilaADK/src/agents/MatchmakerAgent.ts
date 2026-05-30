@@ -1,9 +1,5 @@
 import { callOpenRouter } from '../utils/openRouter';
 import { fetchProvidersFromFirebase } from '../firebase';
-import { ExternalSearchAgent } from './ExternalSearchAgent';
-
-const externalSearch = new ExternalSearchAgent();
-
 /**
  * Matchmaker Agent using OpenRouter & Direct Firebase Queries
  */
@@ -42,20 +38,25 @@ export class MatchmakerAgent {
       console.log(`[Matchmaker] Found ${filteredProviders.length} candidate(s) in Firebase.`);
 
       if (filteredProviders.length === 0) {
-        console.log(`[Matchmaker] No local providers. Delegating to Google Maps search agent for area: ${resolvedLocation}...`);
-        return await externalSearch.searchExternalProviders(cleanedCategory, resolvedLocation);
+        console.log(`[Matchmaker] No local providers found in Firebase.`);
+        return { bestMatch: null, reasoning: "No local providers found." };
       }
 
       const instruction = `
         You are the Matchmaker for Wasila.
         Rank the provided candidates based on their rating, relevance to the user need, and status.
-        Extract the candidate's serviceName as "name", and the candidate's "name" as "providerName".
+        IMPORTANT LOCATION RULE: 
+        - The user's target location is "${resolvedLocation}".
+        - If a candidate has an empty/missing city, consider it a valid match. Do NOT reject them for an empty city.
+        - STRICT RULE: If a candidate's location is explicitly specified AND it is DIFFERENT from the target location "${resolvedLocation}", you MUST REJECT THEM completely. Do not offer candidates from other cities.
+        Extract the candidate's service title (name or serviceName) as "name", and the candidate's person name (providerName or name) as "providerName".
         Return ONLY a JSON object: {"bestMatch": {"id": "string", "name": "string", "providerName": "string", "rating": number, "category": "string", "pricePerHour": number, "location": "string"}, "reasoning": "explanation"}
       `;
 
       const promptText = `
         User Need: "${query}"
         Category Needed: "${cleanedCategory}"
+        Target Location: "${resolvedLocation}"
         Candidates Found in Database:
         ${JSON.stringify(filteredProviders, null, 2)}
       `;

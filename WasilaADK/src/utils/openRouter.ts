@@ -20,12 +20,14 @@ export async function callOpenRouter(
     throw new Error("GEMINI_API_KEY is not defined in the environment variables.");
   }
 
-  // Model hierarchy: Gemini first (fast + reliable), free models as fallback
+  // Model hierarchy: Fast models prioritized to prevent slow responses
   const modelPipeline = [
-    "google/gemini-2.5-flash",  // Primary: fast, reliable, ultra-cheap ($0.00007/req)
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "meta-llama/llama-3.2-3b-instruct:free",
-    "openrouter/free"           // Last resort free router
+    "google/gemini-2.5-flash",  // Primary: fast, reliable
+    "meta-llama/llama-3.3-70b-instruct:free", // High quality free fallback
+    "google/gemma-4-31b-it:free",             // High quality free fallback
+    "deepseek/deepseek-v4-flash:free",        // Fast free fallback
+    "meta-llama/llama-3.2-3b-instruct:free",  // Lightweight free fallback
+    "openrouter/free"                         // Smart free router
   ];
 
   // If the caller explicitly passed a model, prioritize it at the top of the pipeline
@@ -51,7 +53,7 @@ export async function callOpenRouter(
             ],
             response_format: options.isJson ? { type: "json_object" } : undefined,
             temperature: 0.1,
-            max_tokens: 1000
+            max_tokens: 400
           },
           {
             headers: {
@@ -65,7 +67,7 @@ export async function callOpenRouter(
         );
 
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Request timed out after 15s")), 15000)
+          setTimeout(() => reject(new Error("Request timed out after 10s")), 10000)
         );
 
         const response = await Promise.race([responsePromise, timeoutPromise]);
@@ -81,8 +83,8 @@ export async function callOpenRouter(
 
         // Handle Rate Limiting (429) or transient server errors (5xx)
         if (response.status === 429 || response.status >= 500) {
-          console.warn(`[OpenRouter Client] Model '${modelName}' returned status ${response.status}. Attempt ${attempt}/2. Retrying in 1s...`);
-          await sleep(1000);
+          console.warn(`[OpenRouter Client] Model '${modelName}' returned status ${response.status}. Attempt ${attempt}/2. Retrying in 3s...`);
+          await sleep(3000);
           continue;
         }
 
