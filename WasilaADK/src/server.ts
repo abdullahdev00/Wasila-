@@ -30,6 +30,27 @@ const supplierAgent = new SupplierAgent();
 // Stores the last message and provider for each user session without a database
 const chatMemory = new Map();
 
+async function broadcastAgentTrace(
+  sessionId: string,
+  userId: string,
+  userName: string,
+  traces: Array<{ agent: string; status: 'running' | 'done' | 'failed'; detail: string }>
+) {
+  if (!sessionId) return;
+  try {
+    const chatDocRef = doc(db, 'chats', sessionId);
+    await setDoc(chatDocRef, {
+      userId,
+      userName,
+      activeTraces: traces,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+    console.log(`[Trace Broadcast] Session ${sessionId}: ${traces[traces.length - 1]?.agent} is ${traces[traces.length - 1]?.status}`);
+  } catch (err: any) {
+    console.warn(`[Trace Broadcast] Failed for session ${sessionId}:`, err.message);
+  }
+}
+
 app.post('/api/chat', async (req, res) => {
   try {
     const { 
@@ -190,6 +211,12 @@ app.post('/api/chat', async (req, res) => {
       chatMemory.set(userId, userMemory);
     }
 
+    // Initialize session ID if not exists
+    if (!userMemory.chatSessionId) {
+      userMemory.chatSessionId = `chat_${userId}_${Date.now()}`;
+      userMemory.fullMessages = [];
+    }
+
     // Inject history context so agents remember the past
     const historyText = userMemory.history.map((h: any) => `User: "${h.user}" | AI: "${h.ai}"`).join('\n');
     const contextualMessage = `
@@ -199,8 +226,71 @@ app.post('/api/chat', async (req, res) => {
       [Current User Message]: "${message}"
     `;
 
+    const activeTraces: Array<{ agent: string; status: 'running' | 'done' | 'failed'; detail: string }> = [];
+    const pushAndBroadcastTrace = async (agent: string, status: 'running' | 'done' | 'failed', detail: string) => {
+      const existingIdx = activeTraces.findIndex(t => t.agent === agent);
+      if (existingIdx !== -1) {
+        activeTraces[existingIdx].status = status;
+        activeTraces[existingIdx].detail = detail;
+      } else {
+        activeTraces.push({ agent, status, detail });
+      }
+      await broadcastAgentTrace(userMemory.chatSessionId, userId, userName, activeTraces);
+    };
+
+    const callConcierge = async (msg: string, state: any) => {
+      await pushAndBroadcastTrace('ConciergeAgent', 'running', 'Formulating natural language response...');
+      const response = await concierge.reply(msg, state);
+      await pushAndBroadcastTrace('ConciergeAgent', 'done', 'Formulating natural language response...');
+      return response;
+    };
+
+    const callMatchmaker = async (msg: string, category: string, location: string) => {
+      await pushAndBroadcastTrace('MatchmakerAgent', 'running', 'Scanning active service providers...');
+      const result = await matchmaker.findMatch(msg, category, location);
+      await pushAndBroadcastTrace('MatchmakerAgent', 'done', 'Scanning active service providers...');
+      return result;
+    };
+
+    const callPricing = async (basePrice: number, query: string, location: string) => {
+      await pushAndBroadcastTrace('PricingAgent', 'running', 'Evaluating base fee, distance, and surge quote...');
+      const result = await pricingAgent.calculateQuote(basePrice, query, location);
+      await pushAndBroadcastTrace('PricingAgent', 'done', 'Evaluating base fee, distance, and surge quote...');
+      return result;
+    };
+
+    const callSupplier = async (providerName: string, instructions: string, proposal: any, history: string[]) => {
+      await pushAndBroadcastTrace('SupplierAgent', 'running', 'Negotiating price and schedule with provider...');
+      const result = await supplierAgent.evaluateProposal(providerName, instructions, proposal, history);
+      await pushAndBroadcastTrace('SupplierAgent', 'done', 'Negotiating price and schedule with provider...');
+      return result;
+    };
+
+    const callActionBooking = async (msg: string, details: any) => {
+      await pushAndBroadcastTrace('ActionAgent', 'running', 'Executing database booking transaction...');
+      const result = await actionAgent.executeBooking(msg, details);
+      await pushAndBroadcastTrace('ActionAgent', 'done', 'Executing database booking transaction...');
+      return result;
+    };
+
+    const callActionCancellation = async (msg: string, details: any) => {
+      await pushAndBroadcastTrace('ActionAgent', 'running', 'Cancelling booking in database...');
+      const result = await actionAgent.executeCancellation(msg, details);
+      await pushAndBroadcastTrace('ActionAgent', 'done', 'Cancelling booking in database...');
+      return result;
+    };
+
+    const callFetchBookings = async (uid: string) => {
+      await pushAndBroadcastTrace('ActionAgent', 'running', 'Fetching bookings from database...');
+      const result = await fetchUserBookings(uid);
+      await pushAndBroadcastTrace('ActionAgent', 'done', 'Fetching bookings from database...');
+      return result;
+    };
+
     // 1. Intent Parsing Phase (Now memory-aware)
+    await pushAndBroadcastTrace('ParserAgent', 'running', 'Parsing request intent and category...');
     const parsed = await parser.parse(contextualMessage);
+    await pushAndBroadcastTrace('ParserAgent', 'done', 'Parsing request intent and category...');
     console.log("Parsed Intent:", parsed);
 
     // Auto-update user profile address if not set, but user specified it in chat
@@ -219,12 +309,6 @@ app.post('/api/chat', async (req, res) => {
     // Resolve location: parsed location overrides profile address, falls back to Islamabad
     const resolvedLocation = parsed.location || userAddress || 'Islamabad';
     console.log(`[Location Resolver] Client Payload/Saved Profile Address: '${userAddress || 'None'}', Parsed Intent Location: '${parsed.location || 'None'}' => Resolved Match Location: '${resolvedLocation}'`);
-
-    // Initialize session ID if not exists
-    if (!userMemory.chatSessionId) {
-      userMemory.chatSessionId = `chat_${userId}_${Date.now()}`;
-      userMemory.fullMessages = [];
-    }
 
     // Detect if category changed to start a fresh chat session
     if (parsed.category) {
@@ -263,7 +347,7 @@ app.post('/api/chat', async (req, res) => {
         const resolvedTime = parsed.dateTime || (userMemory.lastMatch ? userMemory.lastMatch.negotiatedDateTime : null);
         if (resolvedTime) {
           const resolvedPrice = userMemory.lastMatch ? userMemory.lastMatch.pricePerHour : null;
-          actionResult = await actionAgent.executeBooking(message, { 
+          actionResult = await callActionBooking(message, { 
             providerId, 
             userId: req.body.userId || 'guest',
             dateTime: resolvedTime,
@@ -277,7 +361,7 @@ app.post('/api/chat', async (req, res) => {
             bestMatch: finalBestMatch,
             bookingStatus: 'NEED_TIME', history: userMemory.history
           };
-          const response = await concierge.reply(message, state);
+          const response = await callConcierge(message, state);
           finalReply = response.reply;
         }
       } else {
@@ -286,7 +370,7 @@ app.post('/api/chat', async (req, res) => {
         
         if (categoryToSearch) {
           console.log(`[Auto-Book Flow] No provider in memory. Auto-finding best match for category: ${categoryToSearch}`);
-          matchResult = await matchmaker.findMatch(message, categoryToSearch, resolvedLocation);
+          matchResult = await callMatchmaker(message, categoryToSearch, resolvedLocation);
           
           if (matchResult?.bestMatch) {
             finalBestMatch = matchResult.bestMatch;
@@ -305,7 +389,7 @@ app.post('/api/chat', async (req, res) => {
               // Run negotiation first
               const basePrice = matchResult.bestMatch.pricePerHour || 1000;
               const location = matchResult.bestMatch.location || "Unknown";
-              const quote = await pricingAgent.calculateQuote(basePrice, message, location);
+              const quote = await callPricing(basePrice, message, location);
               matchResult.bestMatch.pricing = quote;
 
               let providerInstructions = '';
@@ -334,7 +418,7 @@ app.post('/api/chat', async (req, res) => {
             if (parsed.dateTime) {
               // Time specified upfront! Book immediately.
               console.log(`[Auto-Book Flow] Best match found and time specified (${parsed.dateTime}). Creating booking...`);
-              actionResult = await actionAgent.executeBooking(message, {
+              actionResult = await callActionBooking(message, {
                 providerId: matchResult.bestMatch.id,
                 userId: userId,
                 dateTime: parsed.dateTime,
@@ -349,7 +433,7 @@ app.post('/api/chat', async (req, res) => {
                 bestMatch: finalBestMatch,
                 bookingStatus: 'NEED_TIME', history: userMemory.history
               };
-              const response = await concierge.reply(message, state);
+              const response = await callConcierge(message, state);
               finalReply = response.reply;
             }
           } else {
@@ -359,7 +443,7 @@ app.post('/api/chat', async (req, res) => {
               userName, userAddress, bestMatch: null,
               bookingStatus: 'NO_MATCH', history: userMemory.history
             };
-            const response = await concierge.reply(message, state);
+            const response = await callConcierge(message, state);
             finalReply = response.reply;
           }
         } else {
@@ -369,13 +453,13 @@ app.post('/api/chat', async (req, res) => {
             userName, userAddress, bestMatch: null,
             bookingStatus: 'NO_PROVIDER', history: userMemory.history
           };
-          const response = await concierge.reply(message, state);
+          const response = await callConcierge(message, state);
           finalReply = response.reply;
         }
       }
     } else if (parsed.action && parsed.action.toLowerCase() === 'cancel') {
       console.log(`[Cancel Flow] Executing cancellation for query: "${message}"`);
-      actionResult = await actionAgent.executeCancellation(message, {
+      actionResult = await callActionCancellation(message, {
         userId,
         category: parsed.category
       });
@@ -396,18 +480,18 @@ app.post('/api/chat', async (req, res) => {
         bookingStatus: 'CHATTING',
         history: userMemory.history
       };
-      const response = await concierge.reply(message, state);
+      const response = await callConcierge(message, state);
       finalReply = response.reply;
     } else {
       // Fetch bookings if user wants to view them
       if (parsed.action && parsed.action.toLowerCase() === 'view_bookings') {
-        userBookings = await fetchUserBookings(userId);
+        userBookings = await callFetchBookings(userId);
         console.log(`[User Bookings] Fetched ${userBookings.length} booking(s) for UID '${userId}'`);
       }
 
       const resolvedCategory = parsed.category || userMemory.currentCategory;
       if (resolvedCategory) {
-        matchResult = await matchmaker.findMatch(message, resolvedCategory, resolvedLocation);
+        matchResult = await callMatchmaker(message, resolvedCategory, resolvedLocation);
         if (matchResult?.bestMatch) {
           if (matchResult.bestMatch.isExternal) {
             // Bypass negotiation for external Google Maps directory providers!
@@ -421,7 +505,7 @@ app.post('/api/chat', async (req, res) => {
           } else {
             const basePrice = matchResult.bestMatch.pricePerHour || 1000;
             const location = matchResult.bestMatch.location || "Unknown";
-            const quote = await pricingAgent.calculateQuote(basePrice, message, location);
+            const quote = await callPricing(basePrice, message, location);
             matchResult.bestMatch.pricing = quote;
             
             console.log(`[Pricing Engine] Dynamic quote calculated: ${quote.total} PKR (Base: ${quote.base}, Distance: ${quote.distanceFee}, Urgency: ${quote.urgencyFee})`);
@@ -467,7 +551,7 @@ app.post('/api/chat', async (req, res) => {
               negotiationTraces.push(`[Negotiation Turn ${turn}] Customer Agent proposed Rs. ${currentProposedPrice} at ${currentProposedDateTime}`);
               negotiationHistory.push(`Customer Agent: Proposed Rs. ${currentProposedPrice} at ${currentProposedDateTime}`);
 
-              const evaluation = await supplierAgent.evaluateProposal(
+              const evaluation = await callSupplier(
                 matchResult.bestMatch.providerName || matchResult.bestMatch.name,
                 providerInstructions,
                 {
@@ -528,7 +612,7 @@ app.post('/api/chat', async (req, res) => {
         bookingStatus: parsed.action === 'view_bookings' ? 'LISTING_BOOKINGS' : (finalBestMatch ? 'PROPOSAL_READY' : 'SEARCHING'),
         history: userMemory.history
       };
-      const response = await concierge.reply(message, state);
+      const response = await callConcierge(message, state);
       finalReply = response.reply;
 
       // Save the provider ID and full match for the next message (if they say "book it" or "hmm")

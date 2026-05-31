@@ -372,14 +372,13 @@ const MessageBubble = ({ item }: { item: Message }) => {
   );
 };
 
-const THINKING_STAGES = [
-  { agent: 'ParserAgent', detail: 'Parsing request intent and category...' },
-  { agent: 'MatchmakerAgent', detail: 'Scanning active service providers...' },
-  { agent: 'PricingAgent', detail: 'Evaluating base fee, distance, and surge quote...' },
-  { agent: 'ConciergeAgent', detail: 'Formulating natural language response...' }
-];
+interface TraceItem {
+  agent: string;
+  status: 'running' | 'done' | 'failed';
+  detail: string;
+}
 
-const ThinkingTraceLoader = ({ activeStep }: { activeStep: number }) => {
+const ThinkingTraceLoader = ({ activeTraces }: { activeTraces: TraceItem[] }) => {
   return (
     <View style={styles.loaderWrapper}>
       <View style={styles.thinkingHeaderLoading}>
@@ -391,23 +390,23 @@ const ThinkingTraceLoader = ({ activeStep }: { activeStep: number }) => {
       </View>
       
       <View style={styles.loaderTraceContainer}>
-        {THINKING_STAGES.map((stage, idx) => {
-          const isDone = idx < activeStep;
-          const isActive = idx === activeStep;
-          const isPending = idx > activeStep;
+        {activeTraces.map((stage, idx) => {
+          const isDone = stage.status === 'done';
+          const isActive = stage.status === 'running';
+          const isFailed = stage.status === 'failed';
           
           return (
             <View key={idx} style={[styles.loaderTraceRow, isActive && styles.loaderTraceRowActive]}>
               <View style={styles.loaderStatusIcon}>
                 {isDone && <Ionicons name="checkmark-circle" size={16} color="#10B981" />}
                 {isActive && <ActivityIndicator size="small" color="#6366F1" style={{ transform: [{ scale: 0.8 }] }} />}
-                {isPending && <Ionicons name="ellipse-outline" size={12} color="#94A3B8" />}
+                {isFailed && <Ionicons name="close-circle" size={16} color="#EF4444" />}
               </View>
               <View style={{ flex: 1, marginLeft: 8 }}>
                 <Typography 
                   variant="caption" 
                   weight="bold" 
-                  style={{ color: isActive ? '#4F46E5' : isDone ? '#10B981' : '#64748B' }}
+                  style={{ color: isActive ? '#4F46E5' : isDone ? '#10B981' : isFailed ? '#EF4444' : '#64748B' }}
                 >
                   ⚙ {stage.agent}
                 </Typography>
@@ -437,7 +436,7 @@ export default function ChatScreen() {
     }
   ]);
   const [isLoading, setIsLoading] = useState(false);
-  const [activeStep, setActiveStep] = useState(0);
+  const [activeTraces, setActiveTraces] = useState<TraceItem[]>([]);
   const flatListRef = useRef<FlatList<any>>(null);
 
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -547,21 +546,23 @@ export default function ChatScreen() {
     setMessages(prev => [...prev, userMsg]);
     setInputText('');
     setIsLoading(true);
-    setActiveStep(0);
+    setActiveTraces([]);
 
     const sessionIdToUse = currentSessionId || `chat_${user?.uid || 'guest'}_${Date.now()}`;
     if (!currentSessionId) {
       setCurrentSessionId(sessionIdToUse);
     }
 
-    const interval = setInterval(() => {
-      setActiveStep(prev => {
-        if (prev < THINKING_STAGES.length - 1) {
-          return prev + 1;
+    const unsubscribeTrace = onSnapshot(doc(db, 'chats', sessionIdToUse), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.activeTraces) {
+          setActiveTraces(data.activeTraces);
         }
-        return prev;
-      });
-    }, 1500);
+      }
+    }, (err) => {
+      console.warn("Error listening to traces:", err);
+    });
 
     try {
       const response = await fetch(`${API_BASE_URL}/chat`, {
@@ -607,9 +608,11 @@ export default function ChatScreen() {
         isError: true,
       }]);
     } finally {
-      clearInterval(interval);
+      if (unsubscribeTrace) {
+        unsubscribeTrace();
+      }
       setIsLoading(false);
-      setActiveStep(0);
+      setActiveTraces([]);
     }
   };
 
@@ -784,7 +787,7 @@ export default function ChatScreen() {
             renderItem={({ item }) => <MessageBubble item={item} />}
             contentContainerStyle={styles.chatList}
             showsVerticalScrollIndicator={false}
-            ListFooterComponent={isLoading ? <ThinkingTraceLoader activeStep={activeStep} /> : null}
+            ListFooterComponent={isLoading ? <ThinkingTraceLoader activeTraces={activeTraces} /> : null}
             onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
           />
 
