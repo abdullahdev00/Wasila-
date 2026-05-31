@@ -7,7 +7,7 @@ import { THEME } from '../../theme';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useRouter } from 'expo-router';
 import { db } from '../../lib/firebase';
-import { collection, query, where, onSnapshot, updateDoc, doc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, updateDoc, doc, getDoc } from 'firebase/firestore';
 
 const getCategoryConfig = (category: string) => {
   const cat = category?.toLowerCase() || '';
@@ -48,6 +48,12 @@ export default function BookingsScreen() {
   const [newDate, setNewDate] = React.useState('');
   const [rescheduleModalVisible, setRescheduleModalVisible] = React.useState(false);
 
+  // Rating Modal State
+  const [ratingModalVisible, setRatingModalVisible] = React.useState(false);
+  const [selectedBookingToRate, setSelectedBookingToRate] = React.useState<any | null>(null);
+  const [userRatingScore, setUserRatingScore] = React.useState(5);
+  const [dismissedBookingIds, setDismissedBookingIds] = React.useState<string[]>([]);
+
   React.useEffect(() => {
     if (!user) {
       console.log("[Bookings Debug] No user is logged in.");
@@ -80,6 +86,70 @@ export default function BookingsScreen() {
 
     return () => unsubscribe();
   }, [user]);
+
+  // Auto-popup rating modal when bookings update
+  React.useEffect(() => {
+    if (user && user.role !== 'provider' && bookings.length > 0) {
+      const unratedCompletedBooking = bookings.find(
+        b => b.status === 'completed' && !b.ratingSubmitted && !dismissedBookingIds.includes(b.id)
+      );
+      if (unratedCompletedBooking && !ratingModalVisible && !selectedBookingToRate) {
+        setSelectedBookingToRate(unratedCompletedBooking);
+        setUserRatingScore(5);
+        setRatingModalVisible(true);
+      }
+    }
+  }, [bookings, dismissedBookingIds, user]);
+
+  const handleRatingSubmit = async () => {
+    if (!selectedBookingToRate) return;
+    try {
+      const bookingId = selectedBookingToRate.id;
+      const serviceId = selectedBookingToRate.serviceId;
+      
+      // 1. Update booking doc in Firestore
+      await updateDoc(doc(db, 'bookings', bookingId), {
+        ratingSubmitted: true,
+        ratingScore: userRatingScore,
+        timestamp: new Date().toISOString()
+      });
+
+      // 2. Fetch and update service rating and reviewCount in services collection
+      if (serviceId) {
+        const serviceRef = doc(db, 'services', serviceId);
+        const serviceSnap = await getDoc(serviceRef);
+        if (serviceSnap.exists()) {
+          const serviceData = serviceSnap.data();
+          const oldRating = Number(serviceData.rating || 0);
+          const oldReviews = Number(serviceData.reviewCount || 0);
+          const newReviews = oldReviews + 1;
+          const newRating = oldReviews === 0 
+            ? userRatingScore 
+            : ((oldRating * oldReviews) + userRatingScore) / newReviews;
+
+          await updateDoc(serviceRef, {
+            rating: newRating,
+            reviewCount: newReviews
+          });
+        }
+      }
+
+      setRatingModalVisible(false);
+      setSelectedBookingToRate(null);
+      Alert.alert("Thank you!", "Your review has been submitted successfully.");
+    } catch (error: any) {
+      console.error("Error submitting rating:", error);
+      Alert.alert("Error", error.message);
+    }
+  };
+
+  const handleLater = () => {
+    if (selectedBookingToRate) {
+      setDismissedBookingIds(prev => [...prev, selectedBookingToRate.id]);
+    }
+    setRatingModalVisible(false);
+    setSelectedBookingToRate(null);
+  };
 
   const handleCancelBooking = (bookingId: string) => {
     Alert.alert(
@@ -287,6 +357,50 @@ export default function BookingsScreen() {
                 onPress={handleRescheduleSubmit}
               >
                 <Typography variant="body" color="inverse" weight="bold">Save</Typography>
+              </TouchableOpacity>
+            </View>
+          </Card>
+        </View>
+      </Modal>
+
+      {/* Rating Modal */}
+      <Modal
+        visible={ratingModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={handleLater}
+      >
+        <View style={styles.modalOverlay}>
+          <Card customStyle={styles.modalCard}>
+            <Typography variant="h2" weight="bold" style={{ marginBottom: 12, textAlign: 'center' }}>Rate Service</Typography>
+            <Typography variant="body" color="muted" style={{ marginBottom: 20, textAlign: 'center' }}>
+              How was your service with {selectedBookingToRate?.providerName || 'your provider'}?
+            </Typography>
+            
+            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12, marginBottom: 24 }}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <TouchableOpacity key={star} onPress={() => setUserRatingScore(star)}>
+                  <Ionicons 
+                    name={userRatingScore >= star ? "star" : "star-outline"} 
+                    size={36} 
+                    color="#F59E0B" 
+                  />
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity 
+                style={[styles.modalBtn, styles.modalCancelBtn]} 
+                onPress={handleLater}
+              >
+                <Typography variant="body" weight="bold">Later</Typography>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.modalBtn, styles.modalSubmitBtn]} 
+                onPress={handleRatingSubmit}
+              >
+                <Typography variant="body" color="inverse" weight="bold">Submit</Typography>
               </TouchableOpacity>
             </View>
           </Card>

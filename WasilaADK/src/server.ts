@@ -8,7 +8,7 @@ import { ActionAgent } from './agents/ActionAgent';
 import { PricingAgent } from './agents/PricingAgent';
 import { SupplierAgent } from './agents/SupplierAgent';
 import { getUserName, fetchUserBookings, db, saveChatSession, fetchLastChatSession } from './firebase';
-import { getDoc, doc, setDoc, updateDoc } from 'firebase/firestore/lite';
+import { getDoc, doc, setDoc, updateDoc, collection, getDocs } from 'firebase/firestore/lite';
 import { callOpenRouter } from './utils/openRouter';
 
 const app = express();
@@ -645,6 +645,57 @@ app.post('/api/generate-instructions', async (req, res) => {
   } catch (error: any) {
     console.error("[AI Instructions Generator] Error:", error.message);
     res.status(500).json({ error: "Failed to generate instructions" });
+  }
+});
+
+app.post('/api/reminders', async (req, res) => {
+  try {
+    console.log(`[Reminders Engine] Running periodic reminder check...`);
+    const bookingsCol = collection(db, 'bookings');
+    const bookingsSnap = await getDocs(bookingsCol);
+    const alertLogs: string[] = [];
+
+    const now = new Date();
+    
+    for (const d of bookingsSnap.docs) {
+      const bookingData = d.data();
+      const status = bookingData.status || '';
+      const reminderSent = bookingData.reminderSent || false;
+
+      // In our simulation, we check for accepted/rescheduled bookings that haven't received reminders yet
+      if ((status === 'accepted' || status === 'rescheduled') && !reminderSent) {
+        // Update booking document
+        await updateDoc(doc(db, 'bookings', d.id), {
+          reminderSent: true,
+          reminderTimestamp: now.toISOString()
+        });
+
+        // Simulate sending reminders (creating notifications logs in Firestore)
+        const notificationsCol = collection(db, 'notifications');
+        const alertMsg = `[1-Hour Reminder Alert] Hi ${bookingData.userName || 'Client'}, your service request for "${bookingData.serviceName}" with provider ${bookingData.providerName || 'Professional'} is scheduled for "${bookingData.date}". The provider is on their way!`;
+        
+        await setDoc(doc(notificationsCol, `reminder_${d.id}`), {
+          bookingId: d.id,
+          userId: bookingData.userId,
+          providerId: bookingData.providerId,
+          message: alertMsg,
+          timestamp: now.toISOString(),
+          type: 'reminder'
+        });
+
+        console.log(`[Reminders Engine] Sent reminder alert for Booking ID: ${d.id}`);
+        alertLogs.push(`Sent reminder for booking ${d.id} (${bookingData.serviceName}) to client ${bookingData.userName} and provider ${bookingData.providerName}`);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Checked bookings. Sent ${alertLogs.length} reminder(s).`,
+      alerts: alertLogs
+    });
+  } catch (error: any) {
+    console.error("[Reminders Engine] Error:", error.message);
+    res.status(500).json({ error: "Failed to run reminders engine" });
   }
 });
 
