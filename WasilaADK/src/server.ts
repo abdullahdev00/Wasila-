@@ -252,8 +252,8 @@ app.post('/api/chat', async (req, res) => {
     let userBookings = null;
     let finalBestMatch: any = null;
 
-    // 2. Check if this is a booking confirmation action
-    if (parsed.action && parsed.action.toLowerCase() === 'book') {
+    // 2. Check if this is a booking confirmation action (and NOT a price negotiation)
+    if (parsed.action && parsed.action.toLowerCase() === 'book' && !(parsed.proposedPrice && parsed.proposedPrice > 0)) {
       // Use memory to know WHO to book if frontend doesn't send it
       const providerId = req.body.providerId || userMemory.lastProviderId; 
       
@@ -402,8 +402,9 @@ app.post('/api/chat', async (req, res) => {
         console.log(`[User Bookings] Fetched ${userBookings.length} booking(s) for UID '${userId}'`);
       }
 
-      if (parsed.category) {
-        matchResult = await matchmaker.findMatch(message, parsed.category, resolvedLocation);
+      const resolvedCategory = parsed.category || userMemory.currentCategory;
+      if (resolvedCategory) {
+        matchResult = await matchmaker.findMatch(message, resolvedCategory, resolvedLocation);
         if (matchResult?.bestMatch) {
           if (matchResult.bestMatch.isExternal) {
             // Bypass negotiation for external Google Maps directory providers!
@@ -447,7 +448,8 @@ app.post('/api/chat', async (req, res) => {
               serviceName: matchResult.bestMatch.serviceName || matchResult.bestMatch.name,
               dateTime: parsed.dateTime || 'Tomorrow, 10:00 AM',
               location: resolvedLocation,
-              proposedPrice: quote.total
+              proposedPrice: (parsed.proposedPrice && parsed.proposedPrice > 0) ? parsed.proposedPrice : quote.total,
+              basePrice: basePrice
             };
 
             const negotiationHistory: string[] = [];

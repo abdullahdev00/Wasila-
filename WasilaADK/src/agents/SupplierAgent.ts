@@ -6,6 +6,7 @@ export interface NegotiationProposal {
   dateTime: string;
   location: string;
   proposedPrice: number;
+  basePrice?: number;
 }
 
 export class SupplierAgent {
@@ -15,9 +16,10 @@ export class SupplierAgent {
     proposal: NegotiationProposal,
     negotiationHistory: string[]
   ) {
+    const originalBasePrice = proposal.basePrice || proposal.proposedPrice;
     const defaultInstructions = `
       - Working hours: 9:00 AM to 6:00 PM.
-      - Base price is firm. You may offer a counter-offer if the proposed price is lower than the base price of Rs. ${proposal.proposedPrice}.
+      - Base price is firm. You may offer a counter-offer if the proposed price is lower than the base price of Rs. ${originalBasePrice}.
       - Sunday is a holiday. Do not accept Sunday bookings.
       - If requested date is Sunday, suggest Saturday or Monday instead.
       - Respond friendly in Roman Urdu or English.
@@ -38,6 +40,7 @@ export class SupplierAgent {
       - Service: "${proposal.serviceName}" (${proposal.category})
       - Requested Date/Time: "${proposal.dateTime}"
       - Customer Location: "${proposal.location}"
+      - Base Price of Service: Rs. ${originalBasePrice}
       - Proposed Price: Rs. ${proposal.proposedPrice}
 
       Negotiation History so far:
