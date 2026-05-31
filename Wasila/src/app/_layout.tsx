@@ -2,10 +2,10 @@ import React, { useEffect } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { ThemeProvider, DefaultTheme } from '@react-navigation/native';
 import { onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot, collection, query, where } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { useAuthStore, UserRole, UserProfile } from '../store/useAuthStore';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, Alert } from 'react-native';
 
 export default function RootLayout() {
   const { user, setUser, isLoading, setLoading } = useAuthStore();
@@ -14,12 +14,18 @@ export default function RootLayout() {
 
   useEffect(() => {
     let unsubscribeSnapshot: (() => void) | null = null;
+    let unsubscribeNotifications: (() => void) | null = null;
+    const appStartTime = new Date().toISOString();
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
-      // Clean up previous snapshot listener if exists
+      // Clean up previous snapshot listeners if exist
       if (unsubscribeSnapshot) {
         unsubscribeSnapshot();
         unsubscribeSnapshot = null;
+      }
+      if (unsubscribeNotifications) {
+        unsubscribeNotifications();
+        unsubscribeNotifications = null;
       }
 
       if (firebaseUser) {
@@ -63,6 +69,25 @@ export default function RootLayout() {
           console.error("Firestore user onSnapshot error:", error);
           setLoading(false);
         });
+
+        // Listen to the Firestore notifications in real-time for push alert simulation
+        const notifQuery = query(
+          collection(db, 'notifications'),
+          where('userId', '==', firebaseUser.uid)
+        );
+        unsubscribeNotifications = onSnapshot(notifQuery, (snapshot) => {
+          snapshot.docChanges().forEach((change) => {
+            if (change.type === 'added') {
+              const data = change.doc.data();
+              if (data.timestamp && data.timestamp > appStartTime) {
+                Alert.alert("Wasila Notification", data.message);
+              }
+            }
+          });
+        }, (error) => {
+          console.error("Firestore notifications onSnapshot error:", error);
+        });
+
       } else {
         setUser(null);
         setLoading(false);
@@ -73,6 +98,9 @@ export default function RootLayout() {
       unsubscribeAuth();
       if (unsubscribeSnapshot) {
         unsubscribeSnapshot();
+      }
+      if (unsubscribeNotifications) {
+        unsubscribeNotifications();
       }
     };
   }, []);

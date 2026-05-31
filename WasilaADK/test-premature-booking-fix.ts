@@ -2,6 +2,9 @@ import { ParserAgent } from './src/agents/ParserAgent';
 import { MatchmakerAgent } from './src/agents/MatchmakerAgent';
 import { SupplierAgent } from './src/agents/SupplierAgent';
 import { PricingAgent } from './src/agents/PricingAgent';
+import { ActionAgent } from './src/agents/ActionAgent';
+import { db } from './src/firebase';
+import { doc, getDoc } from 'firebase/firestore/lite';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -93,6 +96,61 @@ async function runTest() {
   }
 
   console.log("\n✔ Ahmed Raza Agent correctly counter-offered Rs. 1200 as expected!");
+
+  // Turn 3: User says "Krdo book" (no price) to confirm and create the booking
+  const query3 = "Krdo book";
+  console.log(`\n[Turn 3] User query: "${query3}"`);
+
+  const historyText3 = `${historyText} | User: "${query2}" | AI: "Ahmed Raza Agent counter-offered Rs. 1200 per hour. Kya aap yeh confirm karna chahte hain?"`;
+  const contextualMessage3 = `
+    [Recent Chat History]:
+    ${historyText3}
+    
+    [Current User Message]: "${query3}"
+  `;
+
+  const parsed3 = await parser.parse(contextualMessage3);
+  console.log("Parsed Turn 3:", JSON.stringify(parsed3, null, 2));
+
+  // In server.ts, this should trigger the booking confirmation block:
+  const isBookingTriggered3 = parsed3.action === 'book' && !(parsed3.proposedPrice && parsed3.proposedPrice > 0);
+  console.log(`Is Booking Confirmation Triggered on Turn 3: ${isBookingTriggered3} (Expected: true)`);
+
+  if (!isBookingTriggered3) {
+    throw new Error("FAIL: Booking confirmation was NOT triggered on Turn 3!");
+  }
+
+  // Simulate executing booking inside server.ts:
+  const resolvedTime3 = parsed3.dateTime || proposal.dateTime; // 'Tomorrow, 10:00 AM'
+  const actionAgentMock = new ActionAgent();
+  const actionResult3 = await actionAgentMock.executeBooking(query3, {
+    providerId: match2.bestMatch.id,
+    userId: 'test-user-isb-123',
+    dateTime: resolvedTime3,
+    price: 1200 // Negotiated price
+  });
+
+  console.log("Booking Action Result:", JSON.stringify(actionResult3, null, 2));
+
+  if (actionResult3.status !== 'success') {
+    throw new Error(`Expected booking status to be success, but got: ${actionResult3.status}`);
+  }
+
+  // Retrieve the booking document from Firestore to verify the custom price was saved
+  console.log("\nVerifying custom price in Firestore...");
+  const bookingSnap = await getDoc(doc(db, 'bookings', actionResult3.bookingId));
+  if (!bookingSnap.exists()) {
+    throw new Error("FAIL: Created booking document could not be retrieved from Firestore!");
+  }
+
+  const bookingData = bookingSnap.data();
+  console.log("Saved Booking Data:", JSON.stringify(bookingData, null, 2));
+
+  if (bookingData.price !== 1200) {
+    throw new Error(`FAIL: Expected saved price to be 1200, but got: ${bookingData.price}`);
+  }
+
+  console.log("\n✔ Booking confirmed successfully in Turn 3 with custom negotiated price Rs. 1200!");
   console.log("✔ Integration test for premature booking fix completed successfully!");
 }
 

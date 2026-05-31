@@ -262,10 +262,12 @@ app.post('/api/chat', async (req, res) => {
         // Check if time is specified in this message, or fall back to previous negotiated time
         const resolvedTime = parsed.dateTime || (userMemory.lastMatch ? userMemory.lastMatch.negotiatedDateTime : null);
         if (resolvedTime) {
+          const resolvedPrice = userMemory.lastMatch ? userMemory.lastMatch.pricePerHour : null;
           actionResult = await actionAgent.executeBooking(message, { 
             providerId, 
             userId: req.body.userId || 'guest',
-            dateTime: resolvedTime 
+            dateTime: resolvedTime,
+            price: resolvedPrice
           });
           finalReply = actionResult.message || "Aapki booking mukammal ho gayi hai!";
         } else {
@@ -335,7 +337,8 @@ app.post('/api/chat', async (req, res) => {
               actionResult = await actionAgent.executeBooking(message, {
                 providerId: matchResult.bestMatch.id,
                 userId: userId,
-                dateTime: parsed.dateTime
+                dateTime: parsed.dateTime,
+                price: matchResult.bestMatch.pricePerHour
               });
               finalReply = actionResult.message || "Aapki booking mukammal ho gayi hai!";
             } else {

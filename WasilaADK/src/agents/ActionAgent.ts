@@ -10,11 +10,13 @@ export class ActionAgent {
       const providerId = providerDetails.providerId;
       const userId = providerDetails.userId || 'guest';
       const dateTime = providerDetails.dateTime || null;
+      const price = providerDetails.price || null;
       
-      console.log(`\n[ActionAgent] Programmatically creating booking in Firebase for provider '${providerId}' at time: ${dateTime || 'default'}...`);
+      console.log(`\n[ActionAgent] Programmatically creating booking in Firebase for provider '${providerId}' at time: ${dateTime || 'default'} with price: ${price}...`);
       const bookingId = await createBooking(userId, providerId, { 
         notes: userConfirmation, 
-        date: dateTime 
+        date: dateTime,
+        price: price
       });
       console.log(`[ActionAgent] Created booking ID: ${bookingId}`);
 

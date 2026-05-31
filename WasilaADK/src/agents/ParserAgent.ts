@@ -17,7 +17,7 @@ export class ParserAgent {
         * Otherwise set it to 'search'.
       - dateTime: A string representing any date or time mentioned by the user for scheduling/booking (e.g., "Tomorrow, 3:00 PM", "Today, 5:00 PM"). If the user says "3 bjy" or "teen baje", map it to a standard time like "3:00 PM". If the user did not specify any date/time, return null.
       - location: Any location, city, sector, area, or address details mentioned by the user in their query. If the user did not specify any location/address, return null.
-      - proposedPrice: Any specific price, discount, or budget proposed, bid, or requested by the user in their query (e.g., if user says "1100 rupee krdo please", "1000 main kr do", "rs 800", "900 pkr", return 1100, 1000, 800, 900 respectively as a number). If no price is mentioned, return null.
+      - proposedPrice: Any specific price, discount, or budget proposed, bid, or requested by the user in their current user message (e.g., if user says "1100 rupee krdo please", "1000 main kr do", "rs 800", "900 pkr", return 1100, 1000, 800, 900 respectively as a number). IMPORTANT: Only extract this price if it is explicitly proposed, bid, or requested in the latest user message. If a price was proposed in the recent chat history but NOT in the current user message, you MUST return null.
       - confidence (0-100)
 
       IMPORTANT: Pay close attention to the [Recent Chat History]. If the AI just asked "should I book X for you?" or offered a service match, and the user responds with ANY short confirmation (even just "hmm", "ok", "haan", "ji"), that means action should be "book".

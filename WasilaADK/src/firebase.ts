@@ -81,6 +81,9 @@ export async function createBooking(userId: string, serviceDocId: string, detail
     console.warn(`[createBooking] Failed to fetch service details for ID: ${serviceDocId}`, err);
   }
 
+  // Use custom price if provided (e.g. from negotiation)
+  const finalPrice = (details?.price !== undefined && details?.price !== null) ? details.price : price;
+
   const newBooking = {
     userId,
     userName,
@@ -88,7 +91,7 @@ export async function createBooking(userId: string, serviceDocId: string, detail
     serviceId: serviceDocId,
     serviceName,
     category,
-    price,
+    price: finalPrice,
     providerId,
     providerName,
     providerPhotoURL,
@@ -98,7 +101,7 @@ export async function createBooking(userId: string, serviceDocId: string, detail
     notes: details?.notes || ''
   };
   
-  console.log(`[Firebase Helper] Inserting booking doc:`, newBooking);
+  console.log(`[Firebase Helper] Inserting booking doc with price ${finalPrice}:`, newBooking);
   const docRef = await addDoc(bookingsCol, newBooking);
   return docRef.id;
 }

@@ -591,6 +591,14 @@ export default function ChatScreen() {
       };
 
       setMessages(prev => [...prev, aiMsg]);
+
+      if (data.bookingConfirmed) {
+        Alert.alert(
+          "Booking Confirmed!",
+          `Aap ki booking ${data.bestMatch?.providerName || data.bestMatch?.name || 'Professional'} ke saath Rs. ${data.bestMatch?.pricePerHour || ''} mein confirm ho gayi hai!`,
+          [{ text: "OK", onPress: () => router.replace('/(tabs)/bookings') }]
+        );
+      }
     } catch (error) {
       setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
