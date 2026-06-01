@@ -234,9 +234,15 @@ app.post('/api/chat', async (req, res) => {
       if (existingIdx !== -1) {
         activeTraces[existingIdx].status = status;
         activeTraces[existingIdx].detail = detail;
-        if (thinking) activeTraces[existingIdx].thinking = thinking;
+        if (thinking !== undefined) {
+          activeTraces[existingIdx].thinking = thinking;
+        }
       } else {
-        activeTraces.push({ agent, status, detail, thinking });
+        const traceObj: any = { agent, status, detail };
+        if (thinking !== undefined) {
+          traceObj.thinking = thinking;
+        }
+        activeTraces.push(traceObj);
       }
       await broadcastAgentTrace(userMemory.chatSessionId, userId, userName, activeTraces);
     };
@@ -364,7 +370,7 @@ app.post('/api/chat', async (req, res) => {
           const resolvedPrice = userMemory.lastMatch ? userMemory.lastMatch.pricePerHour : null;
           
           let scheduleValid = true;
-          let evaluation = null;
+          let evaluation: any = null;
           
           // Only validate if a new time was proposed in the current turn
           if (parsed.dateTime) {
@@ -446,6 +452,7 @@ app.post('/api/chat', async (req, res) => {
           
           if (matchResult?.bestMatch) {
             finalBestMatch = matchResult.bestMatch;
+            let providerInstructions = '';
             if (matchResult.bestMatch.isExternal) {
               matchResult.bestMatch.negotiatedDateTime = parsed.dateTime || 'Today';
               matchResult.bestMatch.negotiatedStatus = 'accepted';
@@ -464,7 +471,7 @@ app.post('/api/chat', async (req, res) => {
               const quote = await callPricing(basePrice, message, location);
               matchResult.bestMatch.pricing = quote;
 
-              let providerInstructions = '';
+              providerInstructions = '';
               try {
                 const serviceDoc = await getDoc(doc(db, 'services', matchResult.bestMatch.id));
                 if (serviceDoc.exists()) {
@@ -773,7 +780,7 @@ app.post('/api/chat', async (req, res) => {
         userAddress: userAddress,
         bookings: userBookings,
         bestMatch: finalBestMatch, 
-        bookingStatus: parsed.action === 'view_bookings' ? 'LISTING_BOOKINGS' : (finalBestMatch ? 'PROPOSAL_READY' : 'SEARCHING'),
+        bookingStatus: parsed.action === 'view_bookings' ? 'LISTING_BOOKINGS' : (finalBestMatch ? 'PROPOSAL_READY' : (resolvedCategory ? 'NO_MATCH' : 'SEARCHING')),
         history: userMemory.history
       };
       const response = await callConcierge(message, state);
