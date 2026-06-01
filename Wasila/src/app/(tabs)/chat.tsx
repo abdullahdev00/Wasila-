@@ -28,7 +28,7 @@ import { Card } from '../../components/ui/Card';
 import { API_BASE_URL } from '../../lib/apiConfig';
 import { useAuthStore } from '../../store/useAuthStore';
 
-type Trace = { agent: string; step: string; detail: any };
+type Trace = { agent: string; status: 'running' | 'done' | 'failed'; detail: any; thinking?: string };
 type ProviderMatch = { 
   id?: string; 
   name: string; 

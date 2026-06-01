@@ -809,7 +809,7 @@ app.post('/api/chat', async (req, res) => {
       sender: 'ai',
       text: finalReply,
       timestamp: new Date().toISOString(),
-      traces: matchResult?.bestMatch?.negotiationTraces || [],
+      traces: activeTraces,
       bestMatch: finalBestMatch,
       bookingConfirmed: bookingConfirmed
     });
@@ -834,12 +834,7 @@ app.post('/api/chat', async (req, res) => {
     res.json({
       workplan: ["Analyze", "Search", "Match", "Respond"],
       reply: finalReply,
-      traces: [
-        `Plan: Analyze`,
-        `Intent: ${parsed.category || 'General'}`,
-        `Provider: ${finalBestMatch?.name || 'None found'}`,
-        ...(matchResult?.bestMatch?.negotiationTraces || [])
-      ],
+      traces: activeTraces,
       bestMatch: finalBestMatch,
       actionStatus: bookingConfirmed ? 'CONFIRMED' : (matchResult?.bestMatch ? 'PROPOSAL_READY' : 'SEARCHING'),
       bookingConfirmed: bookingConfirmed
