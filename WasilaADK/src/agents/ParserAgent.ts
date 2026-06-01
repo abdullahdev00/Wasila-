@@ -33,10 +33,21 @@ export class ParserAgent {
         // Remove leading/trailing colons, spaces, and punctuation
         parsed.category = parsed.category.replace(/^[:\s\p{P}]+|[:\s\p{P}]+$/gu, "").trim();
       }
+
+      // Build dynamic thinking from actual parsed values — not hardcoded
+      const thinkingParts: string[] = [];
+      if (parsed.category) thinkingParts.push(`Category detected: ${parsed.category}`);
+      if (parsed.action) thinkingParts.push(`Action: ${parsed.action}`);
+      if (parsed.dateTime) thinkingParts.push(`Time: ${parsed.dateTime}`);
+      if (parsed.location) thinkingParts.push(`Location: ${parsed.location}`);
+      if (parsed.proposedPrice) thinkingParts.push(`Proposed price: Rs. ${parsed.proposedPrice}`);
+      thinkingParts.push(`Confidence: ${parsed.confidence ?? 0}%`);
+      parsed.thinking = thinkingParts.join(' | ');
+
       return parsed;
     } catch (error: any) {
       console.error('Parser Run Error:', error.message);
-      return { category: null, action: null, dateTime: null, location: null, proposedPrice: null, confidence: 0, error: error.message };
+      return { category: null, action: null, dateTime: null, location: null, proposedPrice: null, confidence: 0, thinking: 'Failed to parse intent.', error: error.message };
     }
   }
 }

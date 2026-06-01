@@ -178,7 +178,7 @@ const MessageBubble = ({ item }: { item: Message }) => {
           
           {isExpanded && (
             <View style={styles.traceContainer}>
-              {item.traces.map((trace: any, i) => (
+              {item.traces.map((trace: any, i: number) => (
                 <View key={i} style={{ marginTop: 6 }}>
                   {typeof trace === 'string' ? (
                     <Typography variant="caption" color="muted">
@@ -190,6 +190,18 @@ const MessageBubble = ({ item }: { item: Message }) => {
                       <Typography variant="caption" color="muted">
                         {typeof trace.detail === 'object' ? (trace.detail?.reasoning || trace.detail?.category || JSON.stringify(trace.detail).substring(0, 100)) : String(trace.detail)}
                       </Typography>
+                      {/* LLM thinking — dynamic from Firestore, shown under each agent */}
+                      {trace.thinking ? (
+                        <View style={styles.inlineThinkingBox}>
+                          <Ionicons name="bulb-outline" size={11} color="#7C3AED" style={{ marginRight: 4, marginTop: 1 }} />
+                          <Typography
+                            variant="caption"
+                            style={{ color: '#7C3AED', fontSize: 10, fontStyle: 'italic', flex: 1 }}
+                          >
+                            {trace.thinking}
+                          </Typography>
+                        </View>
+                      ) : null}
                     </View>
                   )}
                 </View>
@@ -376,6 +388,7 @@ interface TraceItem {
   agent: string;
   status: 'running' | 'done' | 'failed';
   detail: string;
+  thinking?: string;
 }
 
 const ThinkingTraceLoader = ({ activeTraces }: { activeTraces: TraceItem[] }) => {
@@ -416,6 +429,18 @@ const ThinkingTraceLoader = ({ activeTraces }: { activeTraces: TraceItem[] }) =>
                 >
                   {stage.detail}
                 </Typography>
+                {/* Show LLM thinking inline when agent is done and thinking is available */}
+                {isDone && stage.thinking ? (
+                  <View style={styles.inlineThinkingBox}>
+                    <Ionicons name="bulb-outline" size={11} color="#7C3AED" style={{ marginRight: 4, marginTop: 1 }} />
+                    <Typography
+                      variant="caption"
+                      style={{ color: '#7C3AED', fontSize: 10, fontStyle: 'italic', flex: 1 }}
+                    >
+                      {stage.thinking}
+                    </Typography>
+                  </View>
+                ) : null}
               </View>
             </View>
           );
@@ -998,6 +1023,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#C7D2FE',
     alignSelf: 'flex-start',
+  },
+  inlineThinkingBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: '#F5F3FF',
+    borderRadius: 6,
+    borderLeftWidth: 2,
+    borderLeftColor: '#7C3AED',
   },
   traceContainer: {
     marginTop: 6,

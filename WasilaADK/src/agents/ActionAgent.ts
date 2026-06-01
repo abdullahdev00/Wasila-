@@ -44,11 +44,12 @@ export class ActionAgent {
       return { 
         status: "success", 
         bookingId: bookingId, 
-        message: responseText.trim() || `Aap ki booking mukammal ho gayi hai! Booking ID: ${bookingId}` 
+        message: responseText.trim() || `Aap ki booking mukammal ho gayi hai! Booking ID: ${bookingId}`,
+        thinking: `Booking created | Provider: ${providerId} | User: ${userId} | Time: ${dateTime || 'default'} | Price: ${price ? 'Rs. ' + price : 'standard'} | ID: ${bookingId}`
       };
     } catch (error: any) {
       console.error('Action Run Error:', error.message);
-      return { status: "error", message: `Maazrat, booking create nahi ho saki: ${error.message}` };
+      return { status: "error", message: `Maazrat, booking create nahi ho saki: ${error.message}`, thinking: `Error: ${error.message}` };
     }
   }
 
@@ -121,11 +122,12 @@ export class ActionAgent {
       return {
         status: "success",
         bookingId: bookingToCancel.id,
-        message: responseText.trim() || `Aap ki booking (${bookingToCancel.serviceName}) cancel ho gayi hai.`
+        message: responseText.trim() || `Aap ki booking (${bookingToCancel.serviceName}) cancel ho gayi hai.`,
+        thinking: `Cancelled booking | Service: ${bookingToCancel.serviceName} | Provider: ${bookingToCancel.providerName} | Booking ID: ${bookingToCancel.id}`
       };
     } catch (error: any) {
       console.error('Cancellation Action Error:', error.message);
-      return { status: "error", message: `Maazrat, booking cancel nahi ho saki: ${error.message}` };
+      return { status: "error", message: `Maazrat, booking cancel nahi ho saki: ${error.message}`, thinking: `Error during cancellation: ${error.message}` };
     }
   }
 }

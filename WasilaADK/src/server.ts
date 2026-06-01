@@ -7,6 +7,7 @@ import { ConciergeAgent } from './agents/ConciergeAgent';
 import { ActionAgent } from './agents/ActionAgent';
 import { PricingAgent } from './agents/PricingAgent';
 import { SupplierAgent } from './agents/SupplierAgent';
+import { CustomerNegotiatorAgent } from './agents/CustomerNegotiatorAgent';
 import { getUserName, fetchUserBookings, db, saveChatSession, fetchLastChatSession } from './firebase';
 import { getDoc, doc, setDoc, updateDoc, collection, getDocs } from 'firebase/firestore/lite';
 import { callOpenRouter } from './utils/openRouter';
@@ -25,6 +26,7 @@ const concierge = new ConciergeAgent();
 const actionAgent = new ActionAgent();
 const pricingAgent = new PricingAgent();
 const supplierAgent = new SupplierAgent();
+const customerNegotiator = new CustomerNegotiatorAgent();
 
 // --- IN-MEMORY CHAT STATE ---
 // Stores the last message and provider for each user session without a database
@@ -34,7 +36,7 @@ async function broadcastAgentTrace(
   sessionId: string,
   userId: string,
   userName: string,
-  traces: Array<{ agent: string; status: 'running' | 'done' | 'failed'; detail: string }>
+  traces: Array<{ agent: string; status: 'running' | 'done' | 'failed'; detail: string; thinking?: string }>
 ) {
   if (!sessionId) return;
   try {
@@ -226,14 +228,15 @@ app.post('/api/chat', async (req, res) => {
       [Current User Message]: "${message}"
     `;
 
-    const activeTraces: Array<{ agent: string; status: 'running' | 'done' | 'failed'; detail: string }> = [];
-    const pushAndBroadcastTrace = async (agent: string, status: 'running' | 'done' | 'failed', detail: string) => {
+    const activeTraces: Array<{ agent: string; status: 'running' | 'done' | 'failed'; detail: string; thinking?: string }> = [];
+    const pushAndBroadcastTrace = async (agent: string, status: 'running' | 'done' | 'failed', detail: string, thinking?: string) => {
       const existingIdx = activeTraces.findIndex(t => t.agent === agent);
       if (existingIdx !== -1) {
         activeTraces[existingIdx].status = status;
         activeTraces[existingIdx].detail = detail;
+        if (thinking) activeTraces[existingIdx].thinking = thinking;
       } else {
-        activeTraces.push({ agent, status, detail });
+        activeTraces.push({ agent, status, detail, thinking });
       }
       await broadcastAgentTrace(userMemory.chatSessionId, userId, userName, activeTraces);
     };
@@ -241,56 +244,68 @@ app.post('/api/chat', async (req, res) => {
     const callConcierge = async (msg: string, state: any) => {
       await pushAndBroadcastTrace('ConciergeAgent', 'running', 'Formulating natural language response...');
       const response = await concierge.reply(msg, state);
-      await pushAndBroadcastTrace('ConciergeAgent', 'done', 'Formulating natural language response...');
+      await pushAndBroadcastTrace('ConciergeAgent', 'done', 'Formulating natural language response...', (response as any).thinking);
       return response;
     };
 
     const callMatchmaker = async (msg: string, category: string, location: string) => {
       await pushAndBroadcastTrace('MatchmakerAgent', 'running', 'Scanning active service providers...');
       const result = await matchmaker.findMatch(msg, category, location);
-      await pushAndBroadcastTrace('MatchmakerAgent', 'done', 'Scanning active service providers...');
+      // reasoning comes directly from LLM inside MatchmakerAgent — fully dynamic
+      const matchThinking = result.reasoning
+        ? `${result.reasoning}${result.bestMatch ? ` → Selected: ${result.bestMatch.name || result.bestMatch.providerName} (Rating: ${result.bestMatch.rating})` : ' → No match found'}`
+        : undefined;
+      await pushAndBroadcastTrace('MatchmakerAgent', 'done', 'Scanning active service providers...', matchThinking);
       return result;
     };
 
     const callPricing = async (basePrice: number, query: string, location: string) => {
       await pushAndBroadcastTrace('PricingAgent', 'running', 'Evaluating base fee, distance, and surge quote...');
       const result = await pricingAgent.calculateQuote(basePrice, query, location);
-      await pushAndBroadcastTrace('PricingAgent', 'done', 'Evaluating base fee, distance, and surge quote...');
+      // thinking built from actual quote result — dynamic
+      const pricingThinking = `Base: Rs. ${result.base} | Distance fee: Rs. ${result.distanceFee} | Urgency: Rs. ${result.urgencyFee} | Surge: Rs. ${result.surgeFee} | Discount: Rs. ${result.discount} | Total: Rs. ${result.total}`;
+      await pushAndBroadcastTrace('PricingAgent', 'done', 'Evaluating base fee, distance, and surge quote...', pricingThinking);
       return result;
     };
 
     const callSupplier = async (providerName: string, instructions: string, proposal: any, history: string[]) => {
       await pushAndBroadcastTrace('SupplierAgent', 'running', 'Negotiating price and schedule with provider...');
       const result = await supplierAgent.evaluateProposal(providerName, instructions, proposal, history);
-      await pushAndBroadcastTrace('SupplierAgent', 'done', 'Negotiating price and schedule with provider...');
+      // reasoning comes from LLM inside SupplierAgent — fully dynamic
+      const supplierThinking = result.reasoning
+        ? `${result.reasoning} | Decision: ${result.status} | Price: Rs. ${result.negotiatedPrice} | Time: ${result.negotiatedDateTime}`
+        : undefined;
+      await pushAndBroadcastTrace('SupplierAgent', 'done', 'Negotiating price and schedule with provider...', supplierThinking);
       return result;
     };
 
     const callActionBooking = async (msg: string, details: any) => {
       await pushAndBroadcastTrace('ActionAgent', 'running', 'Executing database booking transaction...');
       const result = await actionAgent.executeBooking(msg, details);
-      await pushAndBroadcastTrace('ActionAgent', 'done', 'Executing database booking transaction...');
+      await pushAndBroadcastTrace('ActionAgent', 'done', 'Executing database booking transaction...', (result as any).thinking);
       return result;
     };
 
     const callActionCancellation = async (msg: string, details: any) => {
       await pushAndBroadcastTrace('ActionAgent', 'running', 'Cancelling booking in database...');
       const result = await actionAgent.executeCancellation(msg, details);
-      await pushAndBroadcastTrace('ActionAgent', 'done', 'Cancelling booking in database...');
+      await pushAndBroadcastTrace('ActionAgent', 'done', 'Cancelling booking in database...', (result as any).thinking);
       return result;
     };
 
     const callFetchBookings = async (uid: string) => {
       await pushAndBroadcastTrace('ActionAgent', 'running', 'Fetching bookings from database...');
       const result = await fetchUserBookings(uid);
-      await pushAndBroadcastTrace('ActionAgent', 'done', 'Fetching bookings from database...');
+      const fetchThinking = `Fetched ${Array.isArray(result) ? result.length : 0} booking(s) for user ${uid}`;
+      await pushAndBroadcastTrace('ActionAgent', 'done', 'Fetching bookings from database...', fetchThinking);
       return result;
     };
 
     // 1. Intent Parsing Phase (Now memory-aware)
     await pushAndBroadcastTrace('ParserAgent', 'running', 'Parsing request intent and category...');
     const parsed = await parser.parse(contextualMessage);
-    await pushAndBroadcastTrace('ParserAgent', 'done', 'Parsing request intent and category...');
+    // thinking is built dynamically inside ParserAgent from actual parsed values
+    await pushAndBroadcastTrace('ParserAgent', 'done', 'Parsing request intent and category...', parsed.thinking);
     console.log("Parsed Intent:", parsed);
 
     // Auto-update user profile address if not set, but user specified it in chat
@@ -530,40 +545,75 @@ app.post('/api/chat', async (req, res) => {
               console.warn(`[A2A Negotiation] Failed to fetch provider details for service ${matchResult.bestMatch.id}:`, err);
             }
 
-            const proposal = {
+            const customerProposal = {
               category: parsed.category || matchResult.bestMatch.category || 'General',
               serviceName: matchResult.bestMatch.serviceName || matchResult.bestMatch.name,
               dateTime: parsed.dateTime || 'Tomorrow, 10:00 AM',
               location: resolvedLocation,
-              proposedPrice: (parsed.proposedPrice && parsed.proposedPrice > 0) ? parsed.proposedPrice : quote.total,
-              basePrice: basePrice
+              quoteTotal: quote.total,
+              proposedPrice: (parsed.proposedPrice && parsed.proposedPrice > 0) ? parsed.proposedPrice : null
             };
 
             const negotiationHistory: string[] = [];
             const negotiationTraces: string[] = [];
-            let currentProposedPrice = proposal.proposedPrice;
-            let currentProposedDateTime = proposal.dateTime;
+            let currentProposedPrice = quote.total;
+            let currentProposedDateTime = customerProposal.dateTime;
             let currentStatus = 'pending';
+            let lastSupplierOffer: any = null;
             const maxTurns = 2; // Strict limit to prevent infinite loops
 
             for (let turn = 1; turn <= maxTurns; turn++) {
+              // Call Customer Agent
+              await pushAndBroadcastTrace('CustomerNegotiatorAgent', 'running', 'Negotiator formulating offer...');
+              const custOffer = await customerNegotiator.generateOffer(
+                customerProposal,
+                negotiationHistory,
+                lastSupplierOffer,
+                turn,
+                maxTurns
+              );
+              
+              await pushAndBroadcastTrace('CustomerNegotiatorAgent', 'done', 'Negotiator formulated offer...', custOffer.reasoning);
+
+              if (custOffer.status === 'accepted') {
+                currentStatus = 'accepted';
+                break;
+              } else if (custOffer.status === 'rejected') {
+                currentStatus = 'rejected';
+                break;
+              }
+
+              currentProposedPrice = custOffer.negotiatedPrice;
+              currentProposedDateTime = custOffer.negotiatedDateTime;
+
               console.log(`[A2A Negotiation] Turn ${turn}: Customer Agent proposing Rs. ${currentProposedPrice} at ${currentProposedDateTime}`);
-              negotiationTraces.push(`[Negotiation Turn ${turn}] Customer Agent proposed Rs. ${currentProposedPrice} at ${currentProposedDateTime}`);
+              negotiationTraces.push(`[Negotiation Turn ${turn}] Customer Agent proposed Rs. ${currentProposedPrice}: "${custOffer.reasoning}"`);
               negotiationHistory.push(`Customer Agent: Proposed Rs. ${currentProposedPrice} at ${currentProposedDateTime}`);
 
+              // Call Supplier Agent
               const evaluation = await callSupplier(
                 matchResult.bestMatch.providerName || matchResult.bestMatch.name,
                 providerInstructions,
                 {
-                  ...proposal,
+                  category: customerProposal.category,
+                  serviceName: customerProposal.serviceName,
+                  dateTime: currentProposedDateTime,
+                  location: customerProposal.location,
                   proposedPrice: currentProposedPrice,
-                  dateTime: currentProposedDateTime
+                  basePrice: basePrice
                 },
                 negotiationHistory
               );
 
+              lastSupplierOffer = {
+                status: evaluation.status,
+                price: evaluation.negotiatedPrice,
+                time: evaluation.negotiatedDateTime,
+                reasoning: evaluation.reasoning
+              };
+
               console.log(`[A2A Negotiation] Supplier Agent Response:`, evaluation);
-              negotiationTraces.push(`[Negotiation Turn ${turn}] ${matchResult.bestMatch.providerName || matchResult.bestMatch.name} Agent: ${evaluation.reasoning} (Decision: ${evaluation.status})`);
+              negotiationTraces.push(`[Negotiation Turn ${turn}] ${matchResult.bestMatch.providerName || matchResult.bestMatch.name} Agent: "${evaluation.reasoning}" (Decision: ${evaluation.status})`);
               negotiationHistory.push(`${matchResult.bestMatch.providerName || matchResult.bestMatch.name} Agent: Decision=${evaluation.status}, Price=${evaluation.negotiatedPrice}, Time=${evaluation.negotiatedDateTime}`);
 
               if (evaluation.status === 'accepted') {
@@ -575,8 +625,23 @@ app.post('/api/chat', async (req, res) => {
                 currentProposedPrice = evaluation.negotiatedPrice;
                 currentProposedDateTime = evaluation.negotiatedDateTime;
                 if (turn === maxTurns) {
-                  currentStatus = 'accepted'; // Force agreement on last turn to avoid hanging
-                  negotiationTraces.push(`[Negotiation] Customer Agent accepted counter-offer of Rs. ${currentProposedPrice} at ${currentProposedDateTime}`);
+                  // Final decision by Customer Agent
+                  await pushAndBroadcastTrace('CustomerNegotiatorAgent', 'running', 'Negotiator evaluating final counter-offer...');
+                  const finalDecision = await customerNegotiator.generateOffer(
+                    customerProposal,
+                    negotiationHistory,
+                    lastSupplierOffer,
+                    turn + 1,
+                    maxTurns
+                  );
+                  await pushAndBroadcastTrace('CustomerNegotiatorAgent', 'done', 'Negotiator evaluated final counter-offer...', finalDecision.reasoning);
+
+                  if (finalDecision.status === 'rejected') {
+                    currentStatus = 'rejected';
+                  } else {
+                    currentStatus = 'accepted'; // Force agreement on last turn to avoid hanging if they didn't reject
+                    negotiationTraces.push(`[Negotiation] Customer Agent accepted counter-offer of Rs. ${currentProposedPrice}`);
+                  }
                   break;
                 }
               } else {

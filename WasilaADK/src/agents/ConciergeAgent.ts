@@ -33,6 +33,7 @@ export class ConciergeAgent {
         * If Status is "NO_MATCH": Politely inform the user that you could not find any active service provider in the database matching their requested service or category at this moment. Suggest they try searching or clarifying.
         * If Status is "NO_PROVIDER": Politely tell them that you don't know which specific provider they want to book, and ask them to select one or search first.
         * If Status is "NEED_TIME": Inform the user that you have found a great match (mention the matched provider's name and rating/price if available) and ask them to specify the day and time they want to book the service for (e.g., "Tomorrow 2:00 PM" or "Today 5:00 PM").
+        * If Status is "PROPOSAL_READY": Warmly inform the user that you found a great provider. Highlight that the AI Customer Agent has already negotiated a discount for them. Explicitly compare the original base price/quote (from state.bestMatch.pricing.total) and the final negotiated price (from state.bestMatch.pricePerHour) as a win (e.g., "Base price Rs. 2000 thi, par humne Rs. 1650 negotiate karwa li hai"). Ask if they want to book it.
         * If Status is "ERROR": Apologize and say that the system encountered an error.
       - NEVER repeat, list, or dump bookings or service details from the chat history unless the user explicitly asks about them, or if the "Status" is "LISTING_BOOKINGS".
       - Keep the reply concise, natural, and focused ONLY on answering the user's latest query. Do not add extra information that was not asked.
@@ -56,18 +57,30 @@ export class ConciergeAgent {
 
     try {
       const responseText = await callOpenRouter(instruction, promptText);
-      return { reply: responseText.trim() || "Mujhe aapki baat samajh nahi aayi, bara-e-meharbani dobara koshish karein." };
+
+      // Build dynamic thinking from actual state — not hardcoded
+      const thinkingParts: string[] = [];
+      const status = state.bookingStatus || 'Searching';
+      thinkingParts.push(`Status: ${status}`);
+      if (state.bestMatch) thinkingParts.push(`Match: ${state.bestMatch.name || state.bestMatch.providerName}`);
+      if (state.bookings?.length > 0) thinkingParts.push(`Bookings found: ${state.bookings.length}`);
+      thinkingParts.push(`Generating reply in user's language`);
+      const thinking = thinkingParts.join(' | ');
+
+      return { reply: responseText.trim() || "Mujhe aapki baat samajh nahi aayi, bara-e-meharbani dobara koshish karein.", thinking };
     } catch (error: any) {
       console.error('Concierge Run Error:', error.message);
       
       // Dynamic fallback that remains extremely helpful
       if (state.bestMatch) {
         return { 
-          reply: `Aap ke liye sab se behtareen match "${state.bestMatch.name}" (Rating: ${state.bestMatch.rating || '4.5'}) mil gaya hai. Kya main aap ke liye inhen book kar doon?`
+          reply: `Aap ke liye sab se behtareen match "${state.bestMatch.name}" (Rating: ${state.bestMatch.rating || '4.5'}) mil gaya hai. Kya main aap ke liye inhen book kar doon?`,
+          thinking: `Fallback: match found (${state.bestMatch.name}), suggesting booking`
         };
       } else {
         return { 
-          reply: "Main is waqt aap ke liye koi provider nahi dhoond paaya. Bara-e-meharbani thodi der baad dobara koshish karein ya apna query wazeh karein." 
+          reply: "Main is waqt aap ke liye koi provider nahi dhoond paaya. Bara-e-meharbani thodi der baad dobara koshish karein ya apna query wazeh karein.",
+          thinking: `Fallback: no match found, asking user to retry`
         };
       }
     }
