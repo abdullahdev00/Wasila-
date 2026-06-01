@@ -42,7 +42,7 @@ Wasila introduces a **Multi-Agent Orchestrator** backed by Gemini 2.5 Flash. It 
 
 ## 🤖 The Multi-Agent Orchestration Flow
 
-Wasila splits complex service coordination into 8 specialized agents:
+Wasila splits complex service coordination into 9 specialized agents:
 
 ```
                   [Customer Message Input]
@@ -64,7 +64,7 @@ Wasila splits complex service coordination into 8 specialized agents:
                              ▼                        │
          ┌───────────────────┴───────────────────┐    │
          │         A2A Negotiation Loop          │ ───┘
-         │  Customer Agent (Server proposes)     │
+         │  CustomerNegotiatorAgent (Cust AI)    │
          │                  ⇄                    │
          │  SupplierAgent (Ahmed Raza's AI)      │
          │  • Evaluates based on rules           │
@@ -82,10 +82,11 @@ Wasila splits complex service coordination into 8 specialized agents:
 1. **ParserAgent**: Detects the category of problem, filters out bargaining attempts from premature booking requests, and parses dates/prices.
 2. **MatchmakerAgent**: Searches Firestore `services` collection, checks active flags, and ranks the best candidate. If no local matches exist, calls the **ExternalSearchAgent** to scrape nearby listings from Google Maps.
 3. **PricingAgent**: Programmatically computes travel fees, urgency premiums, and surge multiples to create a starting quote.
-4. **SupplierAgent**: Acts as the service provider's AI proxy. Reads Firestore instructions (e.g. *"Never accept below Rs. 1200"*) and executes negotiation.
-5. **ActionAgent**: Modifies the Firestore database. Creates bookings, processes cancellations, and coordinates status states (`pending`, `accepted`, `completed`, `cancelled`).
-6. **ConciergeAgent**: Synthesizes responses in Roman Urdu or Urdu Nastaliq script, greeting users once, and rendering the matching UI cards.
-7. **PlanningAgent**: Displays a step-by-step resolution roadmap on the frontend chat trace logs.
+4. **CustomerNegotiatorAgent**: Represents the customer in A2A negotiations. Aims to get a strategic discount (targeting 15-20% off) and dynamically evaluates and counters Supplier counter-offers.
+5. **SupplierAgent**: Acts as the service provider's AI representative. Reads Firestore instructions (e.g., *"Never accept below Rs. 1200"*) and negotiates/counters based on guidelines.
+6. **ActionAgent**: Modifies the Firestore database. Creates bookings, processes cancellations, and coordinates status states (`pending`, `accepted`, `completed`, `cancelled`).
+7. **ConciergeAgent**: Synthesizes responses in Roman Urdu or Urdu Nastaliq script, greeting users once, and rendering the matching UI cards.
+8. **PlanningAgent**: Displays a step-by-step resolution roadmap on the frontend chat trace logs.
 
 ---
 
