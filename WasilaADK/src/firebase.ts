@@ -151,6 +151,7 @@ export async function saveChatSession(
   userName: string,
   messages: any[],
   metadata: {
+    serviceId?: string;
     providerId?: string;
     providerName?: string;
     category?: string;

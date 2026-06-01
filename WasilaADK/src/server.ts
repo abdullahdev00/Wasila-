@@ -134,7 +134,7 @@ app.post('/api/chat', async (req, res) => {
 
             userMemory = {
               history: history.slice(-5),
-              lastProviderId: lastSession.providerId || (lastMatch ? lastMatch.id : null),
+              lastProviderId: lastSession.serviceId || (lastMatch ? lastMatch.id : null),
               lastMatch: lastMatch,
               chatSessionId: clientSessionId,
               fullMessages: messages,
@@ -190,7 +190,7 @@ app.post('/api/chat', async (req, res) => {
 
         userMemory = {
           history: history.slice(-5), // Keep last 5 turns
-          lastProviderId: lastSession.providerId || (lastMatch ? lastMatch.id : null),
+          lastProviderId: lastSession.serviceId || (lastMatch ? lastMatch.id : null),
           lastMatch: lastMatch,
           chatSessionId: lastSession.id,
           fullMessages: messages,
@@ -362,13 +362,70 @@ app.post('/api/chat', async (req, res) => {
         const resolvedTime = parsed.dateTime || (userMemory.lastMatch ? userMemory.lastMatch.negotiatedDateTime : null);
         if (resolvedTime) {
           const resolvedPrice = userMemory.lastMatch ? userMemory.lastMatch.pricePerHour : null;
-          actionResult = await callActionBooking(message, { 
-            providerId, 
-            userId: req.body.userId || 'guest',
-            dateTime: resolvedTime,
-            price: resolvedPrice
-          });
-          finalReply = actionResult.message || "Aapki booking mukammal ho gayi hai!";
+          
+          let scheduleValid = true;
+          let evaluation = null;
+          
+          // Only validate if a new time was proposed in the current turn
+          if (parsed.dateTime) {
+            let providerInstructions = '';
+            let providerName = 'Professional';
+            try {
+              const serviceDoc = await getDoc(doc(db, 'services', providerId));
+              if (serviceDoc.exists()) {
+                const serviceData = serviceDoc.data();
+                providerInstructions = serviceData.providerInstructions || '';
+                providerName = serviceData.providerName || serviceData.name || 'Professional';
+              }
+            } catch (err) {
+              console.warn(`[Booking Validation] Failed to fetch service instructions:`, err);
+            }
+            
+            const basePrice = finalBestMatch?.pricing?.base || finalBestMatch?.pricePerHour || 1000;
+            evaluation = await supplierAgent.evaluateProposal(
+              providerName,
+              providerInstructions,
+              {
+                category: parsed.category || finalBestMatch?.category || 'General',
+                serviceName: finalBestMatch?.serviceName || finalBestMatch?.name || 'Service',
+                dateTime: resolvedTime,
+                location: resolvedLocation,
+                proposedPrice: resolvedPrice || basePrice,
+                basePrice: basePrice
+              },
+              []
+            );
+            
+            if (evaluation.status !== 'accepted') {
+              scheduleValid = false;
+            }
+          }
+          
+          if (scheduleValid) {
+            actionResult = await callActionBooking(message, { 
+              providerId, 
+              userId: req.body.userId || 'guest',
+              dateTime: resolvedTime,
+              price: resolvedPrice
+            });
+            finalReply = actionResult.message || "Aapki booking mukammal ho gayi hai!";
+          } else {
+            console.log(`[Booking Validation] Time rejected/countered by Supplier:`, evaluation);
+            
+            if (userMemory.lastMatch) {
+              userMemory.lastMatch.negotiatedDateTime = evaluation.negotiatedDateTime;
+              userMemory.lastMatch.negotiatedStatus = evaluation.status;
+            }
+            finalBestMatch = userMemory.lastMatch;
+            
+            const state = { 
+              userName, userAddress, 
+              bestMatch: finalBestMatch,
+              bookingStatus: 'PROPOSAL_READY', history: userMemory.history
+            };
+            const response = await callConcierge(message, state);
+            finalReply = response.reply;
+          }
         } else {
           // Provider exists but no time. Ask the user for the time!
           const state = { 
@@ -414,7 +471,7 @@ app.post('/api/chat', async (req, res) => {
                   const serviceData = serviceDoc.data();
                   providerInstructions = serviceData.providerInstructions || '';
                   userMemory.lastProviderUserId = serviceData.providerId || matchResult.bestMatch.id;
-                  userMemory.lastProviderName = serviceData.providerName || matchResult.bestMatch.name;
+                  userMemory.lastProviderName = serviceData.providerName || serviceData.name || 'Professional';
                 }
               } catch (err) {
                 console.warn(`[Auto-Book] Failed to fetch service details:`, err);
@@ -430,9 +487,51 @@ app.post('/api/chat', async (req, res) => {
               userMemory.currentCategory = categoryToSearch;
             }
 
-            if (parsed.dateTime) {
-              // Time specified upfront! Book immediately.
-              console.log(`[Auto-Book Flow] Best match found and time specified (${parsed.dateTime}). Creating booking...`);
+            if (parsed.dateTime && !matchResult.bestMatch.isExternal) {
+              // Validate upfront time using the SupplierAgent
+              const basePrice = matchResult.bestMatch.pricing?.base || 1000;
+              const evaluation = await supplierAgent.evaluateProposal(
+                userMemory.lastProviderName || 'Professional',
+                providerInstructions,
+                {
+                  category: categoryToSearch,
+                  serviceName: matchResult.bestMatch.name || 'Service',
+                  dateTime: parsed.dateTime,
+                  location: resolvedLocation,
+                  proposedPrice: matchResult.bestMatch.pricePerHour,
+                  basePrice: basePrice
+                },
+                []
+              );
+
+              if (evaluation.status === 'accepted') {
+                console.log(`[Auto-Book Flow] Time accepted by Supplier. Creating booking...`);
+                actionResult = await callActionBooking(message, {
+                  providerId: matchResult.bestMatch.id,
+                  userId: userId,
+                  dateTime: parsed.dateTime,
+                  price: matchResult.bestMatch.pricePerHour
+                });
+                finalReply = actionResult.message || "Aapki booking mukammal ho gayi hai!";
+              } else {
+                console.log(`[Auto-Book Flow] Time rejected/countered by Supplier:`, evaluation);
+                
+                // Update match details with countered details
+                matchResult.bestMatch.negotiatedDateTime = evaluation.negotiatedDateTime;
+                matchResult.bestMatch.negotiatedStatus = evaluation.status;
+                finalBestMatch = matchResult.bestMatch;
+                
+                // Set state and ask Concierge to explain schedule issues
+                const state = { 
+                  userName, userAddress, 
+                  bestMatch: finalBestMatch,
+                  bookingStatus: 'PROPOSAL_READY', history: userMemory.history
+                };
+                const response = await callConcierge(message, state);
+                finalReply = response.reply;
+              }
+            } else if (parsed.dateTime && matchResult.bestMatch.isExternal) {
+              // External listings are booked directly
               actionResult = await callActionBooking(message, {
                 providerId: matchResult.bestMatch.id,
                 userId: userId,
@@ -535,7 +634,7 @@ app.post('/api/chat', async (req, res) => {
                 
                 // Resolve and store provider user details
                 const matchedProviderUserId = serviceData.providerId || matchResult.bestMatch.id;
-                const matchedProviderName = serviceData.providerName || matchResult.bestMatch.providerName || matchResult.bestMatch.name;
+                const matchedProviderName = serviceData.providerName || matchResult.bestMatch.providerName || matchResult.bestMatch.name || 'Professional';
                 
                 userMemory.lastProviderUserId = matchedProviderUserId;
                 userMemory.lastProviderName = matchedProviderName;
@@ -592,7 +691,7 @@ app.post('/api/chat', async (req, res) => {
 
               // Call Supplier Agent
               const evaluation = await callSupplier(
-                matchResult.bestMatch.providerName || matchResult.bestMatch.name,
+                userMemory.lastProviderName || 'Professional',
                 providerInstructions,
                 {
                   category: customerProposal.category,
@@ -613,8 +712,8 @@ app.post('/api/chat', async (req, res) => {
               };
 
               console.log(`[A2A Negotiation] Supplier Agent Response:`, evaluation);
-              negotiationTraces.push(`[Negotiation Turn ${turn}] ${matchResult.bestMatch.providerName || matchResult.bestMatch.name} Agent: "${evaluation.reasoning}" (Decision: ${evaluation.status})`);
-              negotiationHistory.push(`${matchResult.bestMatch.providerName || matchResult.bestMatch.name} Agent: Decision=${evaluation.status}, Price=${evaluation.negotiatedPrice}, Time=${evaluation.negotiatedDateTime}`);
+              negotiationTraces.push(`[Negotiation Turn ${turn}] ${userMemory.lastProviderName || 'Provider'} Agent: "${evaluation.reasoning}" (Decision: ${evaluation.status})`);
+              negotiationHistory.push(`${userMemory.lastProviderName || 'Provider'} Agent: Decision=${evaluation.status}, Price=${evaluation.negotiatedPrice}, Time=${evaluation.negotiatedDateTime}`);
 
               if (evaluation.status === 'accepted') {
                 currentStatus = 'accepted';
@@ -715,6 +814,7 @@ app.post('/api/chat', async (req, res) => {
       userName,
       userMemory.fullMessages,
       {
+        serviceId: userMemory.lastProviderId || undefined,
         providerId: userMemory.lastProviderUserId || undefined,
         providerName: userMemory.lastProviderName || undefined,
         category: userMemory.currentCategory || undefined,
