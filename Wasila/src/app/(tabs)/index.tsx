@@ -258,9 +258,11 @@ export default function HomeScreen() {
   };
 
   const filteredServices = services.filter(service => {
-    const matchesSearch = service.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                         service.category.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = selectedCategory ? service.category === selectedCategory : true;
+    const sName = service.name || service.providerName || '';
+    const sCat = service.category || '';
+    const matchesSearch = sName.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                         sCat.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesCategory = selectedCategory ? sCat === selectedCategory : true;
     return matchesSearch && matchesCategory;
   });
   
