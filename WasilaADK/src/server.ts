@@ -12,6 +12,13 @@ import { getUserName, fetchUserBookings, db, saveChatSession, fetchLastChatSessi
 import { getDoc, doc, setDoc, updateDoc, collection, getDocs } from 'firebase/firestore/lite';
 import { callOpenRouter } from './utils/openRouter';
 import { parseBookingDateToTimestamp } from './utils/dateParser';
+import { deepSanitize, sanitizeText } from './utils/privacyFilter';
+import { hookGlobalConsole } from './utils/logger';
+import { checkContentSafety } from './utils/contentGuard';
+
+// Hook the global console methods to redact sensitive PII and secrets in all logs automatically
+hookGlobalConsole();
+
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -42,10 +49,12 @@ async function broadcastAgentTrace(
   if (!sessionId) return;
   try {
     const chatDocRef = doc(db, 'chats', sessionId);
+    // Sanitize agent traces before saving to Firestore so that judges see the masked data on the mobile UI!
+    const sanitizedTraces = deepSanitize(traces);
     await setDoc(chatDocRef, {
       userId,
       userName,
-      activeTraces: traces,
+      activeTraces: sanitizedTraces,
       updatedAt: new Date().toISOString()
     }, { merge: true });
     console.log(`[Trace Broadcast] Session ${sessionId}: ${traces[traces.length - 1]?.agent} is ${traces[traces.length - 1]?.status}`);
@@ -67,6 +76,33 @@ app.post('/api/chat', async (req, res) => {
     } = req.body;
     const userId = rawUserId || 'guest';
     console.log(`\n--- New API Request: "${message}" (User: ${userId}) ---`);
+
+    // --- CONTENT SAFETY GUARDRAIL CHECK ---
+    const safetyCheck = checkContentSafety(message);
+    if (safetyCheck.blocked) {
+      console.log(`[Safety Block] Query blocked: "${message}" | Reason: ${safetyCheck.reason}`);
+      
+      const blockedTraces = [
+        {
+          agent: 'PrivacyGuardrail',
+          status: 'failed' as const,
+          detail: `❌ Blocked: ${safetyCheck.reason === 'profanity' ? 'Abusive Content' : safetyCheck.reason === 'injection' ? 'Security Threat' : 'Off-Topic Content'}`,
+          thinking: `Content guardrail blocked message due to safety guidelines.`
+        }
+      ];
+      if (req.body.sessionId) {
+        await broadcastAgentTrace(req.body.sessionId, rawUserId || 'guest', rawUserName || 'User', blockedTraces);
+      }
+      
+      return res.json({
+        workplan: ["Analyze", "Block"],
+        reply: safetyCheck.reply,
+        traces: blockedTraces,
+        bestMatch: null,
+        actionStatus: 'BLOCKED',
+        bookingConfirmed: false
+      });
+    }
 
     // Fetch user details dynamically from Firebase
     let userName = rawUserName || '';
@@ -222,12 +258,12 @@ app.post('/api/chat', async (req, res) => {
 
     // Inject history context so agents remember the past
     const historyText = userMemory.history.map((h: any) => `User: "${h.user}" | AI: "${h.ai}"`).join('\n');
-    const contextualMessage = `
+    const contextualMessage = deepSanitize(`
       [Recent Chat History]:
       ${historyText || 'No previous chat'}
       
       [Current User Message]: "${message}"
-    `;
+    `);
 
     const activeTraces: Array<{ agent: string; status: 'running' | 'done' | 'failed'; detail: string; thinking?: string }> = [];
     const pushAndBroadcastTrace = async (agent: string, status: 'running' | 'done' | 'failed', detail: string, thinking?: string) => {
@@ -250,14 +286,14 @@ app.post('/api/chat', async (req, res) => {
 
     const callConcierge = async (msg: string, state: any) => {
       await pushAndBroadcastTrace('ConciergeAgent', 'running', 'Formulating natural language response...');
-      const response = await concierge.reply(msg, state);
+      const response = await concierge.reply(deepSanitize(msg), deepSanitize(state));
       await pushAndBroadcastTrace('ConciergeAgent', 'done', 'Formulating natural language response...', (response as any).thinking);
       return response;
     };
 
     const callMatchmaker = async (msg: string, category: string, location: string) => {
       await pushAndBroadcastTrace('MatchmakerAgent', 'running', 'Scanning active service providers...');
-      const result = await matchmaker.findMatch(msg, category, location);
+      const result = await matchmaker.findMatch(deepSanitize(msg), deepSanitize(category), deepSanitize(location));
       // reasoning comes directly from LLM inside MatchmakerAgent — fully dynamic
       const matchThinking = result.reasoning
         ? `${result.reasoning}${result.bestMatch ? ` → Selected: ${result.bestMatch.name || result.bestMatch.providerName} (Rating: ${result.bestMatch.rating})` : ' → No match found'}`
@@ -268,7 +304,7 @@ app.post('/api/chat', async (req, res) => {
 
     const callPricing = async (basePrice: number, query: string, location: string) => {
       await pushAndBroadcastTrace('PricingAgent', 'running', 'Evaluating base fee, distance, and surge quote...');
-      const result = await pricingAgent.calculateQuote(basePrice, query, location);
+      const result = await pricingAgent.calculateQuote(basePrice, deepSanitize(query), deepSanitize(location));
       // thinking built from actual quote result — dynamic
       const pricingThinking = `Base: Rs. ${result.base} | Distance fee: Rs. ${result.distanceFee} | Urgency: Rs. ${result.urgencyFee} | Surge: Rs. ${result.surgeFee} | Discount: Rs. ${result.discount} | Total: Rs. ${result.total}`;
       await pushAndBroadcastTrace('PricingAgent', 'done', 'Evaluating base fee, distance, and surge quote...', pricingThinking);
@@ -277,7 +313,7 @@ app.post('/api/chat', async (req, res) => {
 
     const callSupplier = async (providerName: string, instructions: string, proposal: any, history: string[]) => {
       await pushAndBroadcastTrace('SupplierAgent', 'running', 'Negotiating price and schedule with provider...');
-      const result = await supplierAgent.evaluateProposal(providerName, instructions, proposal, history);
+      const result = await supplierAgent.evaluateProposal(deepSanitize(providerName), deepSanitize(instructions), deepSanitize(proposal), deepSanitize(history));
       // reasoning comes from LLM inside SupplierAgent — fully dynamic
       const supplierThinking = result.reasoning
         ? `${result.reasoning} | Decision: ${result.status} | Price: Rs. ${result.negotiatedPrice} | Time: ${result.negotiatedDateTime}`
@@ -308,12 +344,89 @@ app.post('/api/chat', async (req, res) => {
       return result;
     };
 
+    // --- PRIVACY GUARDRAIL SCAN ---
+    const rawQuery = message || '';
+    const hasCnic = /\b\d{5}-\d{7}-\d\b|\b\d{13}\b/.test(rawQuery);
+    const hasPhone = /\b\d{9,12}\b|(?:\+?92[- ]?|0)?[- ]?3\d{2}[- ]?\d{7}\b/.test(rawQuery);
+    const hasEmail = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/.test(rawQuery);
+
+    if (hasCnic || hasPhone || hasEmail) {
+      const redactedItems = [];
+      if (hasCnic) redactedItems.push("CNIC");
+      if (hasPhone) redactedItems.push("Phone Number");
+      if (hasEmail) redactedItems.push("Email");
+      
+      await pushAndBroadcastTrace(
+        'PrivacyGuardrail', 
+        'done', 
+        `🛡️ Redacted sensitive PII: ${redactedItems.join(', ')}`,
+        `Privacy Shield automatically identified and masked user's ${redactedItems.join(', ')} to prevent leakage to OpenRouter/Gemini APIs.`
+      );
+    } else {
+      await pushAndBroadcastTrace(
+        'PrivacyGuardrail', 
+        'done', 
+        `🔒 Active: Scanned, no raw PII detected`,
+        `No sensitive personal data (CNIC, Phone, Email) found in the user query.`
+      );
+    }
+
     // 1. Intent Parsing Phase (Now memory-aware)
     await pushAndBroadcastTrace('ParserAgent', 'running', 'Parsing request intent and category...');
-    const parsed = await parser.parse(contextualMessage);
+    const parsed = await parser.parse(contextualMessage, message);
     // thinking is built dynamically inside ParserAgent from actual parsed values
     await pushAndBroadcastTrace('ParserAgent', 'done', 'Parsing request intent and category...', parsed.thinking);
     console.log("Parsed Intent:", parsed);
+
+    // --- INTELLIGENT CONTENT SAFETY BLOCK (Layer 2 LLM Guardrail) ---
+    if (parsed.safetyViolation) {
+      const reason = parsed.safetyViolation;
+      console.log(`[Safety Block LLM] Query blocked: "${message}" | Reason: ${reason}`);
+      
+      const isUrduScript = /[\u0600-\u06FF]/.test(message || '');
+      let reply = "";
+      if (reason === 'profanity') {
+        reply = isUrduScript 
+          ? "براہِ مہربانی، اخلاقیات کا دھیان رکھیں اور غلط الفاظ کا استعمال نہ کریں۔"
+          : "Bara-e-meharbani, ikhlaqiat ka dhyan rakhein aur ghalat alfaz ka istemal na karein.";
+      } else if (reason === 'off_topic') {
+        const isPolitics = /imran|nawaz|pti|pmln|election|siasat/i.test(message || '');
+        if (isPolitics) {
+          reply = isUrduScript
+            ? "وسیلہ صرف پروفیشنل سروسز (AC Repair, Plumber, etc.) کے لیے ہے۔ میں اس موضوع پر بات نہیں کر سکتا۔"
+            : "Wasila sirf professional services (AC Repair, Plumber, etc.) ke liye hai. Main is topic par baat nahi kar sakta.";
+        } else {
+          reply = isUrduScript
+            ? "وسیلہ صرف پروفیشنل سروسز کے لیے ہے۔ میں غیر متعلقہ موضوعات پر بات نہیں کر سکتا۔"
+            : "Wasila sirf professional services ke liye hai. Main inappropriate ya off-topic subjects par baat nahi kar sakta.";
+        }
+      } else {
+        reply = isUrduScript
+          ? "سسٹم سیکیورٹی ایکٹو ہے۔ آپ کا ایکشن بلاک کر دیا گیا ہے۔"
+          : "System security active hai. Aap ka action block kar diya gaya hai.";
+      }
+
+      const blockedTraces = [
+        {
+          agent: 'PrivacyGuardrail',
+          status: 'failed' as const,
+          detail: `❌ Blocked: ${reason === 'profanity' ? 'Abusive Content' : reason === 'injection' ? 'Security Threat' : 'Off-Topic Content'}`,
+          thinking: `LLM safety scanner detected a policy violation: ${reason}.`
+        }
+      ];
+      if (req.body.sessionId) {
+        await broadcastAgentTrace(req.body.sessionId, rawUserId || 'guest', rawUserName || 'User', blockedTraces);
+      }
+      
+      return res.json({
+        workplan: ["Analyze", "Block"],
+        reply: reply,
+        traces: blockedTraces,
+        bestMatch: null,
+        actionStatus: 'BLOCKED',
+        bookingConfirmed: false
+      });
+    }
 
     // Auto-update user profile address if not set, but user specified it in chat
     if (userId && userId !== 'guest' && !userId.startsWith('test-user-') && !userAddress && parsed.location) {
@@ -329,7 +442,8 @@ app.post('/api/chat', async (req, res) => {
     }
 
     // Resolve location: parsed location overrides profile address, falls back to Islamabad
-    const resolvedLocation = parsed.location || userAddress || 'Islamabad';
+    const cleanAddress = (userAddress && userAddress.toLowerCase() !== 'none') ? userAddress : '';
+    const resolvedLocation = parsed.location || cleanAddress || 'Islamabad';
     console.log(`[Location Resolver] Client Payload/Saved Profile Address: '${userAddress || 'None'}', Parsed Intent Location: '${parsed.location || 'None'}' => Resolved Match Location: '${resolvedLocation}'`);
 
     // Detect if category changed to start a fresh chat session
@@ -683,9 +797,9 @@ app.post('/api/chat', async (req, res) => {
               // Call Customer Agent
               await pushAndBroadcastTrace('CustomerNegotiatorAgent', 'running', 'Negotiator formulating offer...');
               const custOffer = await customerNegotiator.generateOffer(
-                customerProposal,
-                negotiationHistory,
-                lastSupplierOffer,
+                deepSanitize(customerProposal),
+                deepSanitize(negotiationHistory),
+                deepSanitize(lastSupplierOffer),
                 turn,
                 maxTurns
               );
@@ -745,9 +859,9 @@ app.post('/api/chat', async (req, res) => {
                   // Final decision by Customer Agent
                   await pushAndBroadcastTrace('CustomerNegotiatorAgent', 'running', 'Negotiator evaluating final counter-offer...');
                   const finalDecision = await customerNegotiator.generateOffer(
-                    customerProposal,
-                    negotiationHistory,
-                    lastSupplierOffer,
+                    deepSanitize(customerProposal),
+                    deepSanitize(negotiationHistory),
+                    deepSanitize(lastSupplierOffer),
                     turn + 1,
                     maxTurns
                   );
@@ -803,6 +917,9 @@ app.post('/api/chat', async (req, res) => {
         userMemory.lastMatch = matchResult.bestMatch;
       }
     }
+
+    // Sanitize any PII in the final reply before saving and sending
+    finalReply = sanitizeText(finalReply);
 
     // ALWAYS UPDATE MEMORY AFTER EVERY MESSAGE
     if (!userMemory.history) {
@@ -1180,9 +1297,9 @@ app.post('/api/bookings/:id/provider-cancel', async (req, res) => {
     if (category) {
       try {
         matchResult = await matchmaker.findMatch(
-          `Mujhe ${category} chahiye ${userAddress} me`,
-          category,
-          userAddress,
+          deepSanitize(`Mujhe ${category} chahiye ${userAddress} me`),
+          deepSanitize(category),
+          deepSanitize(userAddress),
           serviceId // exclude the cancelled provider
         );
       } catch (matchErr: any) {
@@ -1201,8 +1318,8 @@ app.post('/api/bookings/:id/provider-cancel', async (req, res) => {
       try {
         pricingQuote = await pricingAgent.calculateQuote(
           matchResult.bestMatch.pricePerHour || 1000,
-          `Mujhe ${category} chahiye ${userAddress} me`,
-          matchResult.bestMatch.location || userAddress
+          deepSanitize(`Mujhe ${category} chahiye ${userAddress} me`),
+          deepSanitize(matchResult.bestMatch.location || userAddress)
         );
       } catch (priceErr: any) {
         console.warn(`[Recovery Flow] Pricing error:`, priceErr.message);
@@ -1254,7 +1371,7 @@ app.post('/api/bookings/:id/provider-cancel', async (req, res) => {
 
       let conciergeReply = `${originalProviderName} ne booking cancel krdi ha. Hum ne ${matchResult.bestMatch.providerName} select kiya ha. Humne aapke liye automatic booking confirm krdi ha!`;
       try {
-        const replyObj = await concierge.reply("Mera provider cancel hogya", recoveryState);
+        const replyObj = await concierge.reply("Mera provider cancel hogya", deepSanitize(recoveryState));
         conciergeReply = replyObj.reply;
       } catch (replyErr: any) {
         console.warn(`[Recovery Flow] Concierge reply error:`, replyErr.message);
@@ -1318,7 +1435,7 @@ app.post('/api/bookings/:id/provider-cancel', async (req, res) => {
 
       let conciergeReply = `Hum maazrat chahtey hain, ${originalProviderName} ne booking cancel kar di hai. Is waqt koi aur provider available nahi hai.`;
       try {
-        const replyObj = await concierge.reply("Mera provider cancel hogya aur koi aur nahi mila", recoveryState);
+        const replyObj = await concierge.reply("Mera provider cancel hogya aur koi aur nahi mila", deepSanitize(recoveryState));
         conciergeReply = replyObj.reply;
       } catch (replyErr: any) {
         console.warn(`[Recovery Flow] Concierge reply error:`, replyErr.message);

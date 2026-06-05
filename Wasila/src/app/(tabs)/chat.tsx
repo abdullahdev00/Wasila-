@@ -759,6 +759,15 @@ export default function ChatScreen() {
         </View>
       </View>
 
+      {user?.role !== 'provider' && (
+        <View style={styles.privacyBanner}>
+          <Ionicons name="shield-checkmark" size={14} color="#10B981" style={{ marginRight: 6 }} />
+          <Typography variant="caption" weight="medium" style={{ color: '#065F46' }}>
+            🔒 Your personal data is protected & masked
+          </Typography>
+        </View>
+      )}
+
       {user?.role === 'provider' ? (
         selectedChat === null ? (
           loadingChats ? (
@@ -1320,5 +1329,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 16,
+  },
+  privacyBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ECFDF5',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#A7F3D0',
   },
 });
