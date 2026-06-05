@@ -16,7 +16,7 @@ import {
   Linking
 } from 'react-native';
 import { db } from '../../lib/firebase';
-import { doc, getDoc, collection, addDoc, query, where, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, collection, addDoc, query, where, onSnapshot, updateDoc, arrayUnion } from 'firebase/firestore';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -48,7 +48,7 @@ type ProviderMatch = {
 
 type Message = {
   id: string;
-  sender: 'user' | 'ai';
+  sender: 'user' | 'ai' | 'provider';
   text: string;
   traces?: Trace[];
   bestMatch?: ProviderMatch;
@@ -80,8 +80,8 @@ const MessageBubble = ({ item }: { item: Message }) => {
   const [selectedDate, setSelectedDate] = useState<string>('Tomorrow');
   const [selectedSlot, setSelectedSlot] = useState<string>('11:00 AM - 01:00 PM');
   
-  const isUser = item.sender === 'user';
   const { user } = useAuthStore();
+  const isUser = user?.role === 'provider' ? item.sender === 'provider' : item.sender === 'user';
 
   const handleBookNow = () => {
     if (!user) {
@@ -472,6 +472,56 @@ export default function ChatScreen() {
   const [loadingChats, setLoadingChats] = useState(false);
   const [selectedChat, setSelectedChat] = useState<any | null>(null);
 
+  const activeChatDoc = userChats.find(c => c.id === currentSessionId);
+  const isDirectChatActive = activeChatDoc ? activeChatDoc.directChatActive === true : false;
+
+  const handleExitDirectChat = async () => {
+    if (!currentSessionId) return;
+    try {
+      const chatDocRef = doc(db, 'chats', currentSessionId);
+      await updateDoc(chatDocRef, {
+        directChatActive: false,
+        updatedAt: new Date().toISOString(),
+        messages: arrayUnion({
+          id: Date.now().toString(),
+          sender: 'ai',
+          text: 'Direct chat closed. Wasila AI Orchestrator re-activated.',
+          timestamp: new Date().toISOString()
+        })
+      });
+      Alert.alert("Direct Chat Closed", "Aap wapas Wasila AI Assistant se connect ho chuke hain.");
+    } catch (err: any) {
+      console.error("Error exiting direct chat:", err);
+      Alert.alert("Error", err.message);
+    }
+  };
+
+  const sendProviderMessage = async () => {
+    if (!inputText.trim() || !selectedChat) return;
+
+    const providerMsg = {
+      id: Date.now().toString(),
+      sender: 'provider' as const,
+      text: inputText.trim(),
+      timestamp: new Date().toISOString()
+    };
+
+    setInputText('');
+
+    try {
+      const chatDocRef = doc(db, 'chats', selectedChat.id);
+      await updateDoc(chatDocRef, {
+        messages: arrayUnion(providerMsg),
+        lastMessage: providerMsg.text,
+        updatedAt: new Date().toISOString()
+      });
+      console.log(`[Provider Send] Message sent to Firestore chat ${selectedChat.id}`);
+    } catch (err: any) {
+      console.error("Error writing provider direct message:", err);
+      Alert.alert("Error", "Message send nahi ho saka: " + err.message);
+    }
+  };
+
   // Sync real-time query for customer (user) chats
   useEffect(() => {
     if (!user || user.role === 'provider') return;
@@ -510,6 +560,16 @@ export default function ChatScreen() {
       }
     }
   }, [userChats]);
+
+  // Sync active session's messages in real-time from Firestore updates
+  useEffect(() => {
+    if (currentSessionId && userChats.length > 0) {
+      const activeChat = userChats.find(c => c.id === currentSessionId);
+      if (activeChat && activeChat.messages) {
+        setMessages(activeChat.messages);
+      }
+    }
+  }, [userChats, currentSessionId]);
 
   const startNewSession = () => {
     const newId = `chat_${user?.uid || 'guest'}_${Date.now()}`;
@@ -576,6 +636,31 @@ export default function ChatScreen() {
     const sessionIdToUse = currentSessionId || `chat_${user?.uid || 'guest'}_${Date.now()}`;
     if (!currentSessionId) {
       setCurrentSessionId(sessionIdToUse);
+    }
+
+    const activeChatDoc = userChats.find(c => c.id === sessionIdToUse);
+    const isDirectChatActive = activeChatDoc ? activeChatDoc.directChatActive === true : false;
+
+    if (isDirectChatActive) {
+      try {
+        const chatDocRef = doc(db, 'chats', sessionIdToUse);
+        await updateDoc(chatDocRef, {
+          messages: arrayUnion({
+            id: userMsg.id,
+            sender: 'user',
+            text: userMsg.text,
+            timestamp: new Date().toISOString()
+          }),
+          lastMessage: userMsg.text,
+          updatedAt: new Date().toISOString()
+        });
+      } catch (err: any) {
+        console.error("Error writing direct chat message:", err);
+        Alert.alert("Error", "Message send nahi ho saka: " + err.message);
+      } finally {
+        setIsLoading(false);
+      }
+      return;
     }
 
     const unsubscribeTrace = onSnapshot(doc(db, 'chats', sessionIdToUse), (docSnap) => {
@@ -742,18 +827,30 @@ export default function ChatScreen() {
 
           {user?.role !== 'provider' && (
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <TouchableOpacity 
-                style={{ padding: 6, marginRight: 8 }}
-                onPress={startNewSession}
-              >
-                <Ionicons name="add-circle-outline" size={26} color="#4F46E5" />
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={{ padding: 6 }}
-                onPress={() => setShowHistoryModal(true)}
-              >
-                <Ionicons name="time-outline" size={26} color="#4F46E5" />
-              </TouchableOpacity>
+              {isDirectChatActive ? (
+                <TouchableOpacity 
+                  style={styles.exitDirectBtn}
+                  onPress={handleExitDirectChat}
+                >
+                  <Ionicons name="close-circle-outline" size={16} color="#EF4444" />
+                  <Typography variant="caption" weight="bold" style={{ color: '#EF4444', marginLeft: 4 }}>Exit Chat</Typography>
+                </TouchableOpacity>
+              ) : (
+                <>
+                  <TouchableOpacity 
+                    style={{ padding: 6, marginRight: 8 }}
+                    onPress={startNewSession}
+                  >
+                    <Ionicons name="add-circle-outline" size={26} color="#4F46E5" />
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={{ padding: 6 }}
+                    onPress={() => setShowHistoryModal(true)}
+                  >
+                    <Ionicons name="time-outline" size={26} color="#4F46E5" />
+                  </TouchableOpacity>
+                </>
+              )}
             </View>
           )}
         </View>
@@ -793,19 +890,54 @@ export default function ChatScreen() {
           )
         ) : (
           <View style={{ flex: 1 }}>
-            <FlatList
-              data={selectedChat.messages}
-              keyExtractor={(item, index) => index.toString()}
-              renderItem={({ item }) => <MessageBubble item={item} />}
-              contentContainerStyle={styles.chatList}
-              showsVerticalScrollIndicator={false}
-            />
-            <View style={styles.agentFooter}>
-              <Ionicons name="shield-checkmark" size={20} color="#10B981" style={{ marginRight: 8 }} />
-              <Typography variant="caption" style={{ color: '#065F46', flex: 1 }} weight="medium">
-                Autonomous mode active. Your Supplier Agent is negotiating automatically.
-              </Typography>
-            </View>
+            {selectedChat.directChatActive ? (
+              <KeyboardAvoidingView 
+                style={{ flex: 1 }}
+                behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+              >
+                <FlatList
+                  data={selectedChat.messages}
+                  keyExtractor={(item, index) => index.toString()}
+                  renderItem={({ item }) => <MessageBubble item={item} />}
+                  contentContainerStyle={styles.chatList}
+                  showsVerticalScrollIndicator={false}
+                />
+                <View style={styles.inputContainer}>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Type your message..."
+                    value={inputText}
+                    onChangeText={setInputText}
+                    placeholderTextColor="#94A3B8"
+                    multiline
+                  />
+                  <TouchableOpacity 
+                    style={[styles.sendBtn, !inputText.trim() && styles.sendBtnDisabled]}
+                    onPress={sendProviderMessage}
+                    disabled={!inputText.trim()}
+                  >
+                    <Ionicons name="send" size={20} color="#FFFFFF" />
+                  </TouchableOpacity>
+                </View>
+              </KeyboardAvoidingView>
+            ) : (
+              <>
+                <FlatList
+                  data={selectedChat.messages}
+                  keyExtractor={(item, index) => index.toString()}
+                  renderItem={({ item }) => <MessageBubble item={item} />}
+                  contentContainerStyle={styles.chatList}
+                  showsVerticalScrollIndicator={false}
+                />
+                <View style={styles.agentFooter}>
+                  <Ionicons name="shield-checkmark" size={20} color="#10B981" style={{ marginRight: 8 }} />
+                  <Typography variant="caption" style={{ color: '#065F46', flex: 1 }} weight="medium">
+                    Autonomous mode active. Your Supplier Agent is negotiating automatically.
+                  </Typography>
+                </View>
+              </>
+            )}
           </View>
         )
       ) : (
@@ -971,6 +1103,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
+  },
+  exitDirectBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FEE2E2',
+    backgroundColor: '#FEF2F2',
   },
   traceToggle: {
     paddingHorizontal: 16,

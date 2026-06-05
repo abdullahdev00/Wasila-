@@ -9,7 +9,7 @@ import { PricingAgent } from './agents/PricingAgent';
 import { SupplierAgent } from './agents/SupplierAgent';
 import { CustomerNegotiatorAgent } from './agents/CustomerNegotiatorAgent';
 import { getUserName, fetchUserBookings, db, saveChatSession, fetchLastChatSession, createBooking } from './firebase';
-import { getDoc, doc, setDoc, updateDoc, collection, getDocs } from 'firebase/firestore/lite';
+import { getDoc, doc, setDoc, updateDoc, collection, getDocs, addDoc } from 'firebase/firestore/lite';
 import { callOpenRouter } from './utils/openRouter';
 import { parseBookingDateToTimestamp } from './utils/dateParser';
 import { deepSanitize, sanitizeText } from './utils/privacyFilter';
@@ -728,6 +728,59 @@ app.post('/api/chat', async (req, res) => {
       };
       const response = await callConcierge(message, state);
       finalReply = response.reply;
+    } else if (parsed.action && parsed.action.toLowerCase() === 'chat_provider') {
+      const providerId = userMemory.lastProviderId;
+      const providerUserId = userMemory.lastProviderUserId;
+      const providerName = userMemory.lastProviderName || 'Provider';
+
+      if (providerId && providerUserId) {
+        console.log(`[Direct Chat Activation] Activating direct chat for session ${userMemory.chatSessionId} with provider ${providerName} (${providerUserId})`);
+        
+        // 1. Update chat document in Firestore
+        try {
+          const chatDocRef = doc(db, 'chats', userMemory.chatSessionId);
+          await retryDb(() => updateDoc(chatDocRef, {
+            directChatActive: true,
+            providerId: providerUserId,
+            providerName: providerName,
+            updatedAt: new Date().toISOString()
+          }));
+        } catch (err: any) {
+          console.error(`[Direct Chat Activation Error] Failed to update chat doc:`, err.message);
+        }
+
+        // 2. Create notification document in Firestore for the provider
+        try {
+          const notificationsCol = collection(db, 'notifications');
+          const notificationData = {
+            userId: providerUserId, // Target the provider
+            title: "Direct Chat Request",
+            message: `${userName} aap se direct baat karna chahte hain. Chat tab me ja kar reply karein!`,
+            type: 'direct_chat',
+            sessionId: userMemory.chatSessionId,
+            timestamp: new Date().toISOString(),
+            read: false
+          };
+          await retryDb(() => addDoc(notificationsCol, notificationData));
+          console.log(`[Direct Chat Activation] Provider notification created successfully for ${providerUserId}`);
+        } catch (err: any) {
+          console.error(`[Direct Chat Notification Error] Failed to create notification:`, err.message);
+        }
+
+        const isUrduScript = /[\u0600-\u06FF]/.test(message || '');
+        finalReply = isUrduScript
+          ? `جی بالکل، میں آپ کی بات براہِ راست ${providerName} سے کروا رہا ہوں۔ اب آپ ان سے براہِ راست چیٹ کر سکتے ہیں۔`
+          : `Ji bilkul, main aap ki direct chat ${providerName} se connect kar raha hoon. Ab aap unse direct guftagu kar sakte hain.`;
+        
+        finalBestMatch = userMemory.lastMatch;
+      } else {
+        const isUrduScript = /[\u0600-\u06FF]/.test(message || '');
+        finalReply = isUrduScript
+          ? "براہِ مہربانی، پہلے کسی سروس فراہم کنندہ کو سرچ یا سلیکٹ کریں تاکہ میں آپ کی بات کروا سکوں۔"
+          : "Bara-e-meharbani, pehle kisi service provider ko search ya select karein taake main aap ki baat karwa sakoon.";
+        
+        finalBestMatch = null;
+      }
     } else {
       // Fetch bookings if user wants to view them
       if (parsed.action && parsed.action.toLowerCase() === 'view_bookings') {
