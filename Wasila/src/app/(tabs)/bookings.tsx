@@ -7,7 +7,7 @@ import { THEME } from '../../theme';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useRouter } from 'expo-router';
 import { db } from '../../lib/firebase';
-import { collection, query, where, onSnapshot, updateDoc, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, updateDoc, doc, getDoc, addDoc } from 'firebase/firestore';
 import { API_BASE_URL } from '../../lib/apiConfig';
 
 const getCategoryConfig = (category: string) => {
@@ -49,6 +49,13 @@ export default function BookingsScreen() {
   const [userRatingScore, setUserRatingScore] = React.useState(5);
   const [dismissedBookingIds, setDismissedBookingIds] = React.useState<string[]>([]);
 
+  // Wallet State
+  const [walletBalance, setWalletBalance] = React.useState(5000);
+  const [holdingBalance, setHoldingBalance] = React.useState(0);
+  const [transactions, setTransactions] = React.useState<any[]>([]);
+  const [walletModalVisible, setWalletModalVisible] = React.useState(false);
+  const [depositing, setDepositing] = React.useState(false);
+
   React.useEffect(() => {
     if (!user) {
       console.log("[Bookings Debug] No user is logged in.");
@@ -81,6 +88,77 @@ export default function BookingsScreen() {
 
     return () => unsubscribe();
   }, [user]);
+
+  React.useEffect(() => {
+    if (!user) return;
+
+    // Listen to user doc for balances and transactions
+    const userRef = doc(db, 'users', user.uid);
+    const unsubUser = onSnapshot(userRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setWalletBalance(data.walletBalance !== undefined ? data.walletBalance : 5000);
+        setHoldingBalance(data.holdingBalance !== undefined ? data.holdingBalance : 0);
+        setTransactions(data.transactions || []);
+      } else {
+        setWalletBalance(5000);
+        setHoldingBalance(0);
+        setTransactions([]);
+      }
+    });
+
+    return () => {
+      unsubUser();
+    };
+  }, [user]);
+
+  const handleDepositSimulation = async (amount: number) => {
+    if (!user) return;
+    setDepositing(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/${user.uid}/deposit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount })
+      });
+      const data = await response.json();
+      if (response.ok) {
+        Alert.alert("Deposit Success", `Rs. ${amount.toLocaleString()} has been added to your spendable wallet!`);
+      } else {
+        throw new Error(data.error || "Failed to complete deposit");
+      }
+    } catch (err: any) {
+      console.warn("[Deposit Simulation] API error, using direct Firestore fallback:", err.message);
+      try {
+        const userRef = doc(db, 'users', user.uid);
+        const userSnap = await getDoc(userRef);
+        const currentWallet = userSnap.exists() ? (userSnap.data().walletBalance ?? 5000) : 5000;
+        const name = userSnap.exists() ? (userSnap.data().name || 'Guest User') : 'Guest User';
+        
+        await updateDoc(userRef, {
+          walletBalance: currentWallet + amount
+        });
+
+        await addDoc(collection(db, 'transactions'), {
+          userId: user.uid,
+          userName: name,
+          providerId: 'system',
+          providerName: 'Wasila Platform',
+          bookingId: 'deposit_simulation',
+          amount: amount,
+          type: 'deposit',
+          description: `Rs. ${amount.toLocaleString()} deposited via simulation card (offline)`,
+          timestamp: new Date().toISOString()
+        });
+
+        Alert.alert("Deposit Success", `Rs. ${amount.toLocaleString()} has been added via local offline fallback!`);
+      } catch (innerErr: any) {
+        Alert.alert("Error", innerErr.message || "Failed to simulate deposit");
+      }
+    } finally {
+      setDepositing(false);
+    }
+  };
 
   // Auto-popup rating modal when bookings update
   React.useEffect(() => {
@@ -157,7 +235,8 @@ export default function BookingsScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              if (user?.role === 'provider' && (booking.status === 'accepted' || booking.status === 'pending')) {
+              if (!user) return;
+              if (user.role === 'provider' && (booking.status === 'accepted' || booking.status === 'pending')) {
                 const response = await fetch(`${API_BASE_URL}/bookings/${booking.id}/provider-cancel`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' }
@@ -172,10 +251,42 @@ export default function BookingsScreen() {
                   throw new Error(data.error || "Failed to cancel booking");
                 }
               } else {
+                const userRef = doc(db, 'users', user.uid);
+                const userSnap = await getDoc(userRef);
+                const currentWallet = userSnap.exists() ? (userSnap.data().walletBalance ?? 5000) : 5000;
+                const currentHolding = userSnap.exists() ? (userSnap.data().holdingBalance ?? 0) : 0;
+                const refundAmount = booking.price || 0;
+                const existingTransactions = userSnap.exists() ? (userSnap.data().transactions || []) : [];
+
+                const txId = 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+                const userName = userSnap.exists() ? (userSnap.data().name || 'Customer') : 'Customer';
+                const newTransaction = {
+                  id: txId,
+                  userId: user.uid,
+                  userName: userName,
+                  providerId: booking.providerId || booking.serviceId || 'unknown',
+                  providerName: booking.providerName || 'Professional',
+                  bookingId: booking.id,
+                  amount: refundAmount,
+                  type: 'refund',
+                  description: `Rs. ${refundAmount.toLocaleString()} refunded for cancellation of booking with ${booking.providerName}`,
+                  timestamp: new Date().toISOString()
+                };
+
+                const updatedTransactions = [newTransaction, ...existingTransactions].slice(0, 50);
+
+                await updateDoc(userRef, {
+                  walletBalance: currentWallet + refundAmount,
+                  holdingBalance: Math.max(0, currentHolding - refundAmount),
+                  transactions: updatedTransactions
+                });
+
                 await updateDoc(doc(db, 'bookings', booking.id), {
                   status: 'declined',
+                  paymentStatus: 'refunded',
                   timestamp: new Date().toISOString()
                 });
+
                 Alert.alert("Booking Cancelled", "The booking has been successfully cancelled.");
               }
             } catch (error: any) {
@@ -236,21 +347,32 @@ export default function BookingsScreen() {
     <View style={{ flex: 1 }}>
       <ScrollView style={styles.container}>
         <View style={styles.header}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <TouchableOpacity onPress={() => router.push('/(tabs)/profile')} style={styles.headerAvatar}>
-              {user?.photoURL ? (
-                <Image source={{ uri: user.photoURL }} style={styles.avatarMini} />
-              ) : (
-                <View style={[styles.avatarMini, { backgroundColor: THEME.colors.primary, justifyContent: 'center', alignItems: 'center' }]}>
-                  <Typography variant="caption" color="inverse" weight="bold">
-                    {(user?.name || 'G').charAt(0).toUpperCase()}
-                  </Typography>
-                </View>
-              )}
-            </TouchableOpacity>
-            <Typography variant="h2" weight="bold" style={{ marginLeft: 12 }}>
-              {user.role === 'provider' ? 'Assigned Jobs' : 'My Bookings'}
-            </Typography>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <TouchableOpacity onPress={() => router.push('/(tabs)/profile')} style={styles.headerAvatar}>
+                {user?.photoURL ? (
+                  <Image source={{ uri: user.photoURL }} style={styles.avatarMini} />
+                ) : (
+                  <View style={[styles.avatarMini, { backgroundColor: THEME.colors.primary, justifyContent: 'center', alignItems: 'center' }]}>
+                    <Typography variant="caption" color="inverse" weight="bold">
+                      {(user?.name || 'G').charAt(0).toUpperCase()}
+                    </Typography>
+                  </View>
+                )}
+              </TouchableOpacity>
+              <Typography variant="h2" weight="bold" style={{ marginLeft: 12 }}>
+                {user.role === 'provider' ? 'Assigned Jobs' : 'My Bookings'}
+              </Typography>
+            </View>
+
+            {user.role !== 'provider' && (
+              <TouchableOpacity style={styles.walletHeaderBtn} onPress={() => setWalletModalVisible(true)}>
+                <Ionicons name="wallet-outline" size={18} color={THEME.colors.primary} />
+                <Typography variant="body" weight="bold" style={styles.walletHeaderBalance}>
+                  Rs. {walletBalance.toLocaleString()}
+                </Typography>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
@@ -419,6 +541,128 @@ export default function BookingsScreen() {
           </Card>
         </View>
       </Modal>
+
+      {/* Wallet Modal */}
+      <Modal
+        visible={walletModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setWalletModalVisible(false)}
+      >
+        <View style={styles.walletModalOverlay}>
+          <View style={styles.walletModalContainer}>
+            {/* Header */}
+            <View style={styles.walletModalHeader}>
+              <Typography variant="h2" weight="bold">Wasila Wallet</Typography>
+              <TouchableOpacity onPress={() => setWalletModalVisible(false)}>
+                <Ionicons name="close-circle" size={28} color="#94A3B8" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Premium Wallet Balances Card */}
+            <View style={styles.glassWalletCard}>
+              <View style={{ marginBottom: 14 }}>
+                <Typography variant="caption" style={{ color: 'rgba(255, 255, 255, 0.7)', textTransform: 'uppercase', letterSpacing: 1 }}>
+                  Spendable Balance
+                </Typography>
+                <Typography variant="h1" weight="bold" style={{ color: '#FFFFFF', fontSize: 32, marginTop: 4 }}>
+                  Rs. {walletBalance.toLocaleString()}
+                </Typography>
+              </View>
+              
+              <View style={styles.walletCardDivider} />
+              
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View>
+                  <Typography variant="caption" style={{ color: 'rgba(255, 255, 255, 0.7)' }}>
+                    Locked in Escrow (Holding)
+                  </Typography>
+                  <Typography variant="body" weight="bold" style={{ color: '#FFFFFF', marginTop: 2 }}>
+                    Rs. {holdingBalance.toLocaleString()}
+                  </Typography>
+                </View>
+                <Ionicons name="lock-closed" size={20} color="rgba(255, 255, 255, 0.8)" />
+              </View>
+            </View>
+
+            {/* Deposit Simulator Section */}
+            <View style={styles.depositSection}>
+              <Typography variant="body" weight="bold" style={{ marginBottom: 10 }}>
+                Demo Deposit Simulator
+              </Typography>
+              <View style={styles.depositBtnRow}>
+                <TouchableOpacity 
+                  style={styles.depositBtn} 
+                  onPress={() => handleDepositSimulation(2000)}
+                  disabled={depositing}
+                >
+                  <Ionicons name="add-circle-outline" size={16} color={THEME.colors.primary} />
+                  <Typography variant="caption" weight="bold" style={{ marginLeft: 6, color: THEME.colors.primary }}>
+                    + Rs. 2,000
+                  </Typography>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={styles.depositBtn} 
+                  onPress={() => handleDepositSimulation(5000)}
+                  disabled={depositing}
+                >
+                  <Ionicons name="add-circle-outline" size={16} color={THEME.colors.primary} />
+                  <Typography variant="caption" weight="bold" style={{ marginLeft: 6, color: THEME.colors.primary }}>
+                    + Rs. 5,000
+                  </Typography>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Transaction History List */}
+            <Typography variant="body" weight="bold" style={{ marginBottom: 12 }}>
+              Transaction History
+            </Typography>
+
+            {transactions.length > 0 ? (
+              <ScrollView style={styles.transList} showsVerticalScrollIndicator={false}>
+                {transactions.map((item) => {
+                  const isCredit = item.type === 'deposit' || item.type === 'refund';
+                  return (
+                    <View key={item.id} style={styles.transItem}>
+                      <View style={[styles.transIconWrapper, { backgroundColor: isCredit ? '#10B98115' : '#EF444415' }]}>
+                        <Ionicons 
+                          name={isCredit ? "arrow-down-outline" : "arrow-up-outline"} 
+                          size={18} 
+                          color={isCredit ? "#10B981" : "#EF4444"} 
+                        />
+                      </View>
+                      <View style={{ flex: 1, marginLeft: 12 }}>
+                        <Typography variant="body" weight="medium" style={{ fontSize: 13 }} numberOfLines={1}>
+                          {item.description}
+                        </Typography>
+                        <Typography variant="caption" color="muted" style={{ fontSize: 10, marginTop: 2 }}>
+                          {new Date(item.timestamp).toLocaleString()}
+                        </Typography>
+                      </View>
+                      <Typography 
+                        variant="body" 
+                        weight="bold" 
+                        style={{ color: isCredit ? "#10B981" : "#EF4444", fontSize: 14 }}
+                      >
+                        {isCredit ? '+' : '-'} Rs. {Number(item.amount).toLocaleString()}
+                      </Typography>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            ) : (
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 40 }}>
+                <Ionicons name="receipt-outline" size={36} color="#CBD5E1" />
+                <Typography variant="caption" color="muted" style={{ marginTop: 8 }}>
+                  No transactions yet.
+                </Typography>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -562,5 +806,88 @@ const styles = StyleSheet.create({
   },
   modalSubmitBtn: {
     backgroundColor: THEME.colors.primary,
-  }
+  },
+  walletHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    ...THEME.shadows.sm,
+  },
+  walletHeaderBalance: {
+    marginLeft: 6,
+    color: '#0F172A',
+    fontSize: 14,
+  },
+  walletModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.4)',
+    justifyContent: 'flex-end',
+  },
+  walletModalContainer: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    padding: 24,
+    height: '80%',
+    ...THEME.shadows.lg,
+  },
+  walletModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  glassWalletCard: {
+    backgroundColor: '#4F46E5',
+    borderRadius: 24,
+    padding: 20,
+    marginBottom: 20,
+    ...THEME.shadows.md,
+  },
+  walletCardDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    marginVertical: 14,
+  },
+  depositSection: {
+    marginBottom: 24,
+  },
+  depositBtnRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  depositBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 12,
+    height: 44,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  transList: {
+    flex: 1,
+  },
+  transItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  transIconWrapper: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
 });

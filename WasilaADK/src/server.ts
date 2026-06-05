@@ -8,7 +8,7 @@ import { ActionAgent } from './agents/ActionAgent';
 import { PricingAgent } from './agents/PricingAgent';
 import { SupplierAgent } from './agents/SupplierAgent';
 import { CustomerNegotiatorAgent } from './agents/CustomerNegotiatorAgent';
-import { getUserName, fetchUserBookings, db, saveChatSession, fetchLastChatSession, createBooking } from './firebase';
+import { getUserName, fetchUserBookings, db, saveChatSession, fetchLastChatSession, createBooking, releaseBookingPayment, refundBookingPayment, logTransaction } from './firebase';
 import { getDoc, doc, setDoc, updateDoc, collection, getDocs, addDoc } from 'firebase/firestore/lite';
 import { callOpenRouter } from './utils/openRouter';
 import { parseBookingDateToTimestamp } from './utils/dateParser';
@@ -1240,6 +1240,19 @@ app.post('/api/bookings/:id/provider-cancel', async (req, res) => {
       cancelledAt: Date.now()
     }));
 
+    // Trigger refunding payment escrow
+    try {
+      await refundBookingPayment(
+        bookingData.userId,
+        bookingId,
+        bookingData.price || 0,
+        serviceId,
+        bookingData.providerName || 'Professional'
+      );
+    } catch (escrowErr: any) {
+      console.warn(`[Provider Cancel Route] Escrow refund failed for booking ${bookingId}:`, escrowErr.message);
+    }
+
     // Fetch provider's metrics in the services collection
     const serviceRef = doc(db, 'services', serviceId);
     const serviceSnap = await retryDb(() => getDoc(serviceRef));
@@ -1585,6 +1598,19 @@ app.post('/api/bookings/:id/complete', async (req, res) => {
       completedAt: Date.now()
     }));
 
+    // Trigger releasing payment escrow
+    try {
+      await releaseBookingPayment(
+        bookingData.userId,
+        bookingId,
+        bookingData.price || 0,
+        serviceId,
+        bookingData.providerName || 'Professional'
+      );
+    } catch (escrowErr: any) {
+      console.warn(`[Complete Route] Escrow release failed for booking ${bookingId}:`, escrowErr.message);
+    }
+
     // Update completed bookings count
     const serviceRef = doc(db, 'services', serviceId);
     const serviceSnap = await retryDb(() => getDoc(serviceRef));
@@ -1609,6 +1635,58 @@ app.post('/api/bookings/:id/complete', async (req, res) => {
   } catch (error: any) {
     console.error("[Complete Route] Error:", error.message);
     res.status(500).json({ error: "Failed to mark completion" });
+  }
+});
+
+app.post('/api/users/:id/deposit', async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const { amount } = req.body;
+    
+    if (!amount || typeof amount !== 'number' || amount <= 0) {
+      return res.status(400).json({ error: "Invalid deposit amount" });
+    }
+
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await retryDb(() => getDoc(userRef));
+    
+    let walletBalance = 5000;
+    let userName = 'Guest User';
+
+    if (userSnap.exists()) {
+      const data = userSnap.data();
+      walletBalance = data.walletBalance !== undefined ? data.walletBalance : 5000;
+      userName = data.name || userName;
+    }
+
+    const newWalletBalance = walletBalance + amount;
+
+    await retryDb(() => updateDoc(userRef, {
+      walletBalance: newWalletBalance
+    }));
+
+    // Log transaction
+    await logTransaction(
+      userId,
+      userName,
+      'system',
+      'Wasila Platform',
+      'deposit_simulation',
+      amount,
+      'deposit',
+      `Rs. ${amount.toLocaleString()} deposited via simulation card`
+    );
+
+    console.log(`[Deposit Simulation] Deposited Rs. ${amount} to user ${userId}. New balance: Rs. ${newWalletBalance}`);
+    
+    return res.json({
+      success: true,
+      walletBalance: newWalletBalance,
+      message: `Successfully deposited Rs. ${amount.toLocaleString()}.`
+    });
+  } catch (error: any) {
+    console.error("[Deposit Simulation Route] Error:", error.message);
+    res.status(500).json({ error: "Failed to simulate deposit" });
   }
 });
 

@@ -111,6 +111,13 @@ export async function createBooking(userId: string, serviceDocId: string, detail
   
   console.log(`[Firebase Helper] Inserting booking doc with price ${finalPrice}:`, newBooking);
   const docRef = await addDoc(bookingsCol, newBooking);
+  
+  try {
+    await holdBookingPayment(userId, docRef.id, finalPrice, providerId, providerName);
+  } catch (err) {
+    console.warn(`[createBooking] Failed to automatically place payment on hold for booking ${docRef.id}:`, err);
+  }
+
   return docRef.id;
 }
 
@@ -241,5 +248,238 @@ export async function cancelBooking(bookingId: string): Promise<void> {
     console.error(`[cancelBooking] Failed to cancel booking ID ${bookingId}:`, err);
     throw err;
   }
+}
+
+export async function logTransaction(
+  userId: string,
+  userName: string,
+  providerId: string,
+  providerName: string,
+  bookingId: string,
+  amount: number,
+  type: 'payment_hold' | 'payment_release' | 'refund' | 'deposit',
+  description: string
+): Promise<string> {
+  try {
+    if (!userId || userId === 'guest') {
+      console.log(`[logTransaction] Skipping logging transaction for guest: ${userId}`);
+      return 'skipped';
+    }
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
+    let existingTransactions: any[] = [];
+    if (userSnap.exists()) {
+      existingTransactions = userSnap.data().transactions || [];
+    }
+
+    const txId = 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+    const newTransaction = {
+      id: txId,
+      userId,
+      userName,
+      providerId,
+      providerName,
+      bookingId,
+      amount,
+      type,
+      description,
+      timestamp: new Date().toISOString()
+    };
+
+    const updatedTransactions = [newTransaction, ...existingTransactions].slice(0, 50);
+
+    await setDoc(userRef, {
+      transactions: updatedTransactions
+    }, { merge: true });
+
+    console.log(`[Transaction Logged] User: ${userName} | Type: ${type} | Amount: Rs. ${amount}`);
+    return txId;
+  } catch (err) {
+    console.error(`[logTransaction] Error logging transaction:`, err);
+    throw err;
+  }
+}
+
+export async function holdBookingPayment(
+  userId: string,
+  bookingId: string,
+  price: number,
+  providerId: string,
+  providerName: string
+): Promise<void> {
+  try {
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
+    let walletBalance = 5000;
+    let holdingBalance = 0;
+    let userName = 'Guest User';
+
+    if (userSnap.exists()) {
+      const data = userSnap.data();
+      walletBalance = data.walletBalance !== undefined ? data.walletBalance : 5000;
+      holdingBalance = data.holdingBalance !== undefined ? data.holdingBalance : 0;
+      userName = data.name || userName;
+    }
+
+    const newWalletBalance = walletBalance - price;
+    const newHoldingBalance = holdingBalance + price;
+
+    await setDoc(userRef, {
+      walletBalance: newWalletBalance,
+      holdingBalance: newHoldingBalance
+    }, { merge: true });
+
+    const bookingRef = doc(db, 'bookings', bookingId);
+    await updateDoc(bookingRef, {
+      paymentStatus: 'holding'
+    });
+
+    await logTransaction(
+      userId,
+      userName,
+      providerId,
+      providerName,
+      bookingId,
+      price,
+      'payment_hold',
+      `Rs. ${price.toLocaleString()} hold set for service with ${providerName}`
+    );
+    console.log(`[Wallet ESCROW Hold] Deducted Rs. ${price} from ${userName}'s wallet. New Wallet: Rs. ${newWalletBalance}, New Holding: Rs. ${newHoldingBalance}`);
+  } catch (err) {
+    console.error(`[holdBookingPayment] Failed to hold booking payment for user ${userId}:`, err);
+    throw err;
+  }
+}
+
+export async function releaseBookingPayment(
+  userId: string,
+  bookingId: string,
+  price: number,
+  providerId: string,
+  providerName: string
+): Promise<void> {
+  try {
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
+    let holdingBalance = 0;
+    let userName = 'Guest User';
+
+    if (userSnap.exists()) {
+      const data = userSnap.data();
+      holdingBalance = data.holdingBalance !== undefined ? data.holdingBalance : 0;
+      userName = data.name || userName;
+    }
+
+    const newHoldingBalance = Math.max(0, holdingBalance - price);
+
+    await setDoc(userRef, {
+      holdingBalance: newHoldingBalance
+    }, { merge: true });
+
+    const serviceRef = doc(db, 'services', providerId);
+    const serviceSnap = await getDoc(serviceRef);
+    let currentEarnings = 0;
+    if (serviceSnap.exists()) {
+      currentEarnings = serviceSnap.data().earnings || 0;
+      await updateDoc(serviceRef, {
+        earnings: currentEarnings + price
+      });
+    }
+
+    const bookingRef = doc(db, 'bookings', bookingId);
+    await updateDoc(bookingRef, {
+      paymentStatus: 'released'
+    });
+
+    await logTransaction(
+      userId,
+      userName,
+      providerId,
+      providerName,
+      bookingId,
+      price,
+      'payment_release',
+      `Rs. ${price.toLocaleString()} released to provider ${providerName}`
+    );
+    console.log(`[Wallet ESCROW Release] Released Rs. ${price} hold funds to ${providerName}. New Customer Holding: Rs. ${newHoldingBalance}`);
+  } catch (err) {
+    console.error(`[releaseBookingPayment] Failed to release payment:`, err);
+    throw err;
+  }
+}
+
+export async function refundBookingPayment(
+  userId: string,
+  bookingId: string,
+  price: number,
+  providerId: string,
+  providerName: string
+): Promise<void> {
+  try {
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
+    let walletBalance = 5000;
+    let holdingBalance = 0;
+    let userName = 'Guest User';
+
+    if (userSnap.exists()) {
+      const data = userSnap.data();
+      walletBalance = data.walletBalance !== undefined ? data.walletBalance : 5000;
+      holdingBalance = data.holdingBalance !== undefined ? data.holdingBalance : 0;
+      userName = data.name || userName;
+    }
+
+    const newHoldingBalance = Math.max(0, holdingBalance - price);
+    const newWalletBalance = walletBalance + price;
+
+    await setDoc(userRef, {
+      walletBalance: newWalletBalance,
+      holdingBalance: newHoldingBalance
+    }, { merge: true });
+
+    const bookingRef = doc(db, 'bookings', bookingId);
+    await updateDoc(bookingRef, {
+      paymentStatus: 'refunded'
+    });
+
+    await logTransaction(
+      userId,
+      userName,
+      providerId,
+      providerName,
+      bookingId,
+      price,
+      'refund',
+      `Rs. ${price.toLocaleString()} refunded for cancellation of booking with ${providerName}`
+    );
+    console.log(`[Wallet ESCROW Refund] Refunded Rs. ${price} back to ${userName}'s wallet. New Wallet: Rs. ${newWalletBalance}, New Holding: Rs. ${newHoldingBalance}`);
+  } catch (err) {
+    console.error(`[refundBookingPayment] Failed to refund payment:`, err);
+    throw err;
+  }
+}
+
+export async function getUserBalances(userId: string) {
+  if (!userId || userId === 'guest' || userId.startsWith('test-user-')) {
+    return { walletBalance: 5000, holdingBalance: 0 };
+  }
+  try {
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
+    if (userSnap.exists()) {
+      const data = userSnap.data();
+      const walletBalance = data.walletBalance !== undefined ? data.walletBalance : 5000;
+      const holdingBalance = data.holdingBalance !== undefined ? data.holdingBalance : 0;
+      
+      if (data.walletBalance === undefined || data.holdingBalance === undefined) {
+        await setDoc(userRef, { walletBalance, holdingBalance }, { merge: true });
+      }
+      
+      return { walletBalance, holdingBalance };
+    }
+  } catch (err) {
+    console.warn(`[getUserBalances] Failed to fetch balances for ${userId}:`, err);
+  }
+  return { walletBalance: 5000, holdingBalance: 0 };
 }
 
