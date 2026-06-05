@@ -8,6 +8,7 @@ import { useAuthStore } from '../../store/useAuthStore';
 import { useRouter } from 'expo-router';
 import { db } from '../../lib/firebase';
 import { collection, query, where, onSnapshot, updateDoc, doc, getDoc } from 'firebase/firestore';
+import { API_BASE_URL } from '../../lib/apiConfig';
 
 const getCategoryConfig = (category: string) => {
   const cat = category?.toLowerCase() || '';
@@ -22,18 +23,12 @@ const getCategoryConfig = (category: string) => {
 };
 
 const getStatusBadgeStyle = (status: string) => {
-  switch (status?.toLowerCase()) {
-    case 'accepted':
-      return { bg: '#10B98120', text: '#10B981', label: 'Accepted' };
-    case 'declined':
-      return { bg: '#EF444420', text: '#EF4444', label: 'Declined' };
-    case 'completed':
-      return { bg: '#3B82F620', text: '#3B82F6', label: 'Completed' };
-    case 'rescheduled':
-      return { bg: '#8B5CF620', text: '#8B5CF6', label: 'Rescheduled' };
-    default:
-      return { bg: '#F59E0B20', text: '#F59E0B', label: 'Pending' };
-  }
+  const s = status?.toLowerCase() || '';
+  if (s === 'accepted') return { bg: '#10B98120', text: '#10B981', label: 'Accepted' };
+  if (s === 'declined' || s.includes('cancel')) return { bg: '#EF444420', text: '#EF4444', label: 'Cancelled' };
+  if (s === 'completed') return { bg: '#3B82F620', text: '#3B82F6', label: 'Completed' };
+  if (s === 'rescheduled') return { bg: '#8B5CF620', text: '#8B5CF6', label: 'Rescheduled' };
+  return { bg: '#F59E0B20', text: '#F59E0B', label: 'Pending' };
 };
 
 export default function BookingsScreen() {
@@ -151,7 +146,7 @@ export default function BookingsScreen() {
     setSelectedBookingToRate(null);
   };
 
-  const handleCancelBooking = (bookingId: string) => {
+  const handleCancelBooking = (booking: any) => {
     Alert.alert(
       "Cancel Booking",
       "Are you sure you want to cancel this booking?",
@@ -162,11 +157,27 @@ export default function BookingsScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              await updateDoc(doc(db, 'bookings', bookingId), {
-                status: 'declined',
-                timestamp: new Date().toISOString()
-              });
-              Alert.alert("Booking Cancelled", "The booking has been successfully cancelled.");
+              if (user?.role === 'provider' && (booking.status === 'accepted' || booking.status === 'pending')) {
+                const response = await fetch(`${API_BASE_URL}/bookings/${booking.id}/provider-cancel`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
+                if (response.ok) {
+                  const alertMsg = booking.status === 'pending'
+                    ? "Booking request decline ho gayi hai. Kisi penalty ke baghair recovery trigger ho gayi hai."
+                    : "Booking cancel ho gayi hai aur aapka reliability score penalize kiya gaya hai.";
+                  Alert.alert("Booking Cancelled", alertMsg);
+                } else {
+                  throw new Error(data.error || "Failed to cancel booking");
+                }
+              } else {
+                await updateDoc(doc(db, 'bookings', booking.id), {
+                  status: 'declined',
+                  timestamp: new Date().toISOString()
+                });
+                Alert.alert("Booking Cancelled", "The booking has been successfully cancelled.");
+              }
             } catch (error: any) {
               console.error("Error cancelling booking:", error);
               Alert.alert("Error", error.message);
@@ -298,13 +309,15 @@ export default function BookingsScreen() {
                     <Typography variant="body" weight="bold" color="primary">Rs. {Number(booking.price || 0).toLocaleString()}</Typography>
                   </View>
                   
-                  {/* Action buttons if not completed/declined */}
-                  {booking.status !== 'completed' && booking.status !== 'declined' && (
+                  {/* Action buttons if not completed/declined/cancelled */}
+                  {booking.status !== 'completed' && 
+                   booking.status !== 'declined' && 
+                   !booking.status?.toLowerCase().includes('cancel') && (
                     <View style={styles.actionRow}>
                       <TouchableOpacity style={styles.rescheduleBtn} onPress={() => handleOpenReschedule(booking)}>
                         <Typography variant="caption" weight="bold">Reschedule</Typography>
                       </TouchableOpacity>
-                      <TouchableOpacity style={styles.cancelBtn} onPress={() => handleCancelBooking(booking.id)}>
+                      <TouchableOpacity style={styles.cancelBtn} onPress={() => handleCancelBooking(booking)}>
                         <Typography variant="caption" weight="bold" color="inverse">Cancel</Typography>
                       </TouchableOpacity>
                     </View>

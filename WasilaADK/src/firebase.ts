@@ -1,6 +1,7 @@
 import * as dotenv from 'dotenv';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, query, where, orderBy, limit } from 'firebase/firestore/lite';
+import { parseBookingDateToTimestamp } from './utils/dateParser';
 
 dotenv.config();
 
@@ -14,7 +15,9 @@ const firebaseConfig = {
   measurementId: process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID
 };
 
-const app = initializeApp(firebaseConfig);
+import { getApps, getApp } from 'firebase/app';
+
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app);
 
 export async function fetchProvidersFromFirebase() {
@@ -30,9 +33,13 @@ export async function fetchProvidersFromFirebase() {
         name: data.providerName || data.name,
         serviceName: data.name,
         category: data.category,
-        rating: data.rating || 4.5,
+        rating: data.rating !== undefined ? data.rating : 4.5,
         pricePerHour: data.price || 0,
         location: data.address || data.city || 'Islamabad',
+        reliabilityScore: data.reliabilityScore !== undefined ? data.reliabilityScore : 100,
+        lateArrivals: data.lateArrivals || 0,
+        cancellations: data.cancellations || 0,
+        totalCompletedBookings: data.totalCompletedBookings || 0,
         isBooked: false // Required for matchmaking
       });
     }
@@ -97,6 +104,7 @@ export async function createBooking(userId: string, serviceDocId: string, detail
     providerPhotoURL,
     status: 'pending',
     date: details?.date || 'Tomorrow, 10:00 AM', // Custom or default scheduling date/time
+    scheduledTimestamp: parseBookingDateToTimestamp(details?.date || 'Tomorrow, 10:00 AM'),
     timestamp: new Date().toISOString(),
     notes: details?.notes || ''
   };

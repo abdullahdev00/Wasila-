@@ -8,9 +8,10 @@ import { ActionAgent } from './agents/ActionAgent';
 import { PricingAgent } from './agents/PricingAgent';
 import { SupplierAgent } from './agents/SupplierAgent';
 import { CustomerNegotiatorAgent } from './agents/CustomerNegotiatorAgent';
-import { getUserName, fetchUserBookings, db, saveChatSession, fetchLastChatSession } from './firebase';
+import { getUserName, fetchUserBookings, db, saveChatSession, fetchLastChatSession, createBooking } from './firebase';
 import { getDoc, doc, setDoc, updateDoc, collection, getDocs } from 'firebase/firestore/lite';
 import { callOpenRouter } from './utils/openRouter';
+import { parseBookingDateToTimestamp } from './utils/dateParser';
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -333,13 +334,23 @@ app.post('/api/chat', async (req, res) => {
 
     // Detect if category changed to start a fresh chat session
     if (parsed.category) {
-      if (!userMemory.currentCategory || userMemory.currentCategory !== parsed.category) {
+      const currentLower = (userMemory.currentCategory || '').toLowerCase();
+      const parsedLower = parsed.category.toLowerCase();
+      // Only reset memory if the category is completely different (not a substring of each other)
+      const isSameOrSubcategory = currentLower && (currentLower.includes(parsedLower) || parsedLower.includes(currentLower));
+
+      if (!userMemory.currentCategory || (!isSameOrSubcategory && userMemory.currentCategory !== parsed.category)) {
         console.log(`[Category Change] Resetting provider memory from category '${userMemory.currentCategory}' to '${parsed.category}'`);
         userMemory.currentCategory = parsed.category;
         userMemory.lastProviderId = null;
         userMemory.lastMatch = null;
         userMemory.lastProviderUserId = null;
         userMemory.lastProviderName = null;
+      } else if (isSameOrSubcategory) {
+        // Keep the more specific category in memory if they are related
+        if (currentLower.length < parsedLower.length) {
+          userMemory.currentCategory = parsed.category;
+        }
       }
     }
 
@@ -950,6 +961,484 @@ app.post('/api/reminders', async (req, res) => {
   } catch (error: any) {
     console.error("[Reminders Engine] Error:", error.message);
     res.status(500).json({ error: "Failed to run reminders engine" });
+  }
+});
+
+// --- PROVIDER ACTION ENDPOINTS (RELIABILITY UPDATES) ---
+
+// Helper function to retry Firestore operations in case of transient network drops
+async function retryDb<T>(operation: () => Promise<T>, maxRetries = 4, delayMs = 1500): Promise<T> {
+  for (let i = 1; i <= maxRetries; i++) {
+    try {
+      return await operation();
+    } catch (err: any) {
+      console.warn(`[Firestore Server Retry] Attempt ${i}/${maxRetries} failed: ${err.message}. Retrying in ${delayMs}ms...`);
+      if (i === maxRetries) throw err;
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+  throw new Error("Retry failed");
+}
+
+// 1. Arrived Endpoint: Marks provider arrival and calculates if late
+app.post('/api/bookings/:id/arrived', async (req, res) => {
+  try {
+    const bookingId = req.params.id;
+    const bookingRef = doc(db, 'bookings', bookingId);
+    const bookingSnap = await retryDb(() => getDoc(bookingRef));
+
+    if (!bookingSnap.exists()) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+
+    const bookingData = bookingSnap.data();
+    const serviceId = bookingData.serviceId;
+
+    if (!serviceId) {
+      return res.status(400).json({ error: "Booking does not have a valid serviceId" });
+    }
+
+    const now = Date.now();
+    const scheduledTime = bookingData.scheduledTimestamp || parseBookingDateToTimestamp(bookingData.date || 'Tomorrow, 10:00 AM');
+    
+    // Grace period is 15 minutes (15 * 60 * 1000 ms)
+    const isLate = now > (scheduledTime + 15 * 60 * 1000);
+
+    // Update booking status
+    await retryDb(() => updateDoc(bookingRef, {
+      status: 'arrived',
+      arrivalTimestamp: now,
+      isLate: isLate
+    }));
+
+    // Fetch and update provider's metrics in the services collection
+    const serviceRef = doc(db, 'services', serviceId);
+    const serviceSnap = await retryDb(() => getDoc(serviceRef));
+
+    if (serviceSnap.exists()) {
+      const serviceData = serviceSnap.data();
+      const lateArrivals = (serviceData.lateArrivals || 0) + (isLate ? 1 : 0);
+      const cancellations = serviceData.cancellations || 0;
+      
+      // Calculate reliability score: Starts at 100%, deducts 5% per late arrival, 10% per cancellation
+      const newScore = Math.max(0, 100 - (lateArrivals * 5) - (cancellations * 10));
+
+      await retryDb(() => updateDoc(serviceRef, {
+        lateArrivals: lateArrivals,
+        reliabilityScore: newScore
+      }));
+
+      console.log(`[Provider Arrived] Booking ID: ${bookingId} | Late: ${isLate} | New Reliability Score: ${newScore}%`);
+      return res.json({
+        success: true,
+        isLate,
+        reliabilityScore: newScore,
+        message: isLate ? "Provider marked arrived but arrived LATE. Reliability score updated." : "Provider marked arrived ON TIME."
+      });
+    }
+
+    res.json({ success: true, isLate, message: "Booking updated, but provider service profile not found." });
+  } catch (error: any) {
+    console.error("[Arrived Route] Error:", error.message);
+    res.status(500).json({ error: "Failed to mark arrival" });
+  }
+});
+
+// 2. Cancellation Endpoint: Cancel booking from provider side with heavy penalties
+app.post('/api/bookings/:id/provider-cancel', async (req, res) => {
+  try {
+    const bookingId = req.params.id;
+    const bookingRef = doc(db, 'bookings', bookingId);
+    const bookingSnap = await retryDb(() => getDoc(bookingRef));
+
+    if (!bookingSnap.exists()) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+
+    const bookingData = bookingSnap.data();
+    const serviceId = bookingData.serviceId;
+
+    if (!serviceId) {
+      return res.status(400).json({ error: "Booking does not have a valid serviceId" });
+    }
+
+    const isPending = bookingData.status === 'pending';
+
+    // Update booking status
+    await retryDb(() => updateDoc(bookingRef, {
+      status: isPending ? 'declined' : 'cancelled_by_provider',
+      cancelledAt: Date.now()
+    }));
+
+    // Fetch provider's metrics in the services collection
+    const serviceRef = doc(db, 'services', serviceId);
+    const serviceSnap = await retryDb(() => getDoc(serviceRef));
+
+    let originalProviderName = bookingData.providerName || 'Professional';
+    let newReliabilityScore = 100;
+    let newRating = 4.5;
+
+    if (serviceSnap.exists()) {
+      const serviceData = serviceSnap.data();
+      originalProviderName = serviceData.providerName || serviceData.name || originalProviderName;
+      newReliabilityScore = serviceData.reliabilityScore !== undefined ? serviceData.reliabilityScore : 100;
+      newRating = serviceData.rating !== undefined ? serviceData.rating : 4.5;
+
+      if (!isPending) {
+        const lateArrivals = serviceData.lateArrivals || 0;
+        const cancellations = (serviceData.cancellations || 0) + 1;
+        
+        // Calculate reliability score: deducts 10% per cancellation
+        const newScore = Math.max(0, 100 - (lateArrivals * 5) - (cancellations * 10));
+        // Penalize public rating by 0.2 points (e.g. from 4.8 to 4.6)
+        const currentRating = serviceData.rating !== undefined ? serviceData.rating : 4.5;
+        const calculatedRating = Math.max(1.0, Math.round((currentRating - 0.2) * 10) / 10);
+
+        newReliabilityScore = newScore;
+        newRating = calculatedRating;
+
+        await retryDb(() => updateDoc(serviceRef, {
+          cancellations: cancellations,
+          reliabilityScore: newScore,
+          rating: calculatedRating
+        }));
+
+        console.log(`[Provider Cancel] Booking ID: ${bookingId} | New Reliability Score: ${newScore}% | New Rating: ${calculatedRating}`);
+      } else {
+        console.log(`[Provider Decline] Booking ID: ${bookingId} is pending. Skipping reliability penalty for ${originalProviderName}.`);
+      }
+    }
+
+    // --- PROACTIVE RECOVERY AGENT WORKFLOW ---
+    const userId = bookingData.userId || 'guest';
+    const category = bookingData.category || '';
+    const bookingDate = bookingData.date || 'Tomorrow, 10:00 AM';
+
+    // 1. Resolve user location and details
+    let userAddress = 'Islamabad';
+    let userName = 'Guest User';
+    try {
+      const userSnap = await retryDb(() => getDoc(doc(db, 'users', userId)));
+      if (userSnap.exists()) {
+        const userData = userSnap.data();
+        userAddress = userData.address || 'Islamabad';
+        userName = userData.name || 'Guest User';
+      }
+    } catch (err: any) {
+      console.warn(`[Recovery Flow] Failed to fetch user profile:`, err.message);
+    }
+
+    // 1b. Proactively hydrate user session from memory or Firestore
+    let userMemory = chatMemory.get(userId);
+    let activeSessionId = `chat_${userId}_${Date.now()}`;
+    let fullMessages: any[] = [];
+    let history: any[] = [];
+
+    try {
+      console.log(`[Debug Recovery] Hydrating session for userId: "${userId}"`);
+      const allChatsSnap = await getDocs(collection(db, 'chats'));
+      console.log(`[Debug Recovery] Total chat documents in Firestore chats collection: ${allChatsSnap.docs.length}`);
+      allChatsSnap.forEach(d => {
+        console.log(`- Chat Doc ID: "${d.id}" | userId: "${d.data().userId}" | updatedAt: "${d.data().updatedAt}"`);
+      });
+
+      const lastSession = await fetchLastChatSession(userId);
+      console.log(`[Debug Recovery] fetchLastChatSession result:`, lastSession ? lastSession.id : 'null');
+      if (lastSession) {
+        activeSessionId = lastSession.id;
+        fullMessages = lastSession.messages || [];
+        for (let i = 0; i < fullMessages.length; i++) {
+          if (fullMessages[i].sender === 'user' && fullMessages[i+1]?.sender === 'ai') {
+            history.push({
+              user: fullMessages[i].text,
+              ai: fullMessages[i+1].text
+            });
+          }
+        }
+      }
+    } catch (hydrateErr: any) {
+      console.warn(`[Recovery Flow] Failed to hydrate last session:`, hydrateErr.message);
+    }
+
+    if (!userMemory || userMemory.chatSessionId !== activeSessionId) {
+      userMemory = {
+        history: history.slice(-5),
+        lastProviderId: null,
+        lastMatch: null,
+        chatSessionId: activeSessionId,
+        fullMessages: fullMessages,
+        currentCategory: category,
+        lastProviderUserId: null,
+        lastProviderName: null
+      };
+    }
+
+    // 2. Find next-best provider (excluding the cancelled service doc ID)
+    console.log(`[Recovery Flow] Proactively seeking next-best provider for category '${category}' in '${userAddress}' (excluding service ID: ${serviceId})...`);
+    
+    let matchResult: any = null;
+    if (category) {
+      try {
+        matchResult = await matchmaker.findMatch(
+          `Mujhe ${category} chahiye ${userAddress} me`,
+          category,
+          userAddress,
+          serviceId // exclude the cancelled provider
+        );
+      } catch (matchErr: any) {
+        console.error(`[Recovery Flow] Matchmaking error:`, matchErr.message);
+      }
+    }
+
+    let recoveryNotificationMsg = '';
+    let recoveryState: any = null;
+
+    if (matchResult && matchResult.bestMatch) {
+      console.log(`[Recovery Flow] Next-best provider found: ${matchResult.bestMatch.providerName} (ID: ${matchResult.bestMatch.id})`);
+      
+      // Calculate dynamic pricing quote for this provider
+      let pricingQuote = { total: matchResult.bestMatch.pricePerHour || 1000, base: matchResult.bestMatch.pricePerHour || 1000, distanceFee: 0, urgencyFee: 0, surgeFee: 0, discount: 0 };
+      try {
+        pricingQuote = await pricingAgent.calculateQuote(
+          matchResult.bestMatch.pricePerHour || 1000,
+          `Mujhe ${category} chahiye ${userAddress} me`,
+          matchResult.bestMatch.location || userAddress
+        );
+      } catch (priceErr: any) {
+        console.warn(`[Recovery Flow] Pricing error:`, priceErr.message);
+      }
+
+      const finalPrice = pricingQuote.total;
+      matchResult.bestMatch.pricing = pricingQuote;
+      matchResult.bestMatch.pricePerHour = finalPrice; // Standard rate saved to memory
+      matchResult.bestMatch.negotiatedDateTime = bookingDate;
+      matchResult.bestMatch.negotiatedStatus = 'accepted';
+      matchResult.bestMatch.negotiationTraces = [
+        `[Recovery Agent] Original booking cancelled by ${originalProviderName}`,
+        `[Matchmaker] Auto-selected next-best provider: ${matchResult.bestMatch.providerName}`
+      ];
+
+      // Automatically create the new recovery booking in Firestore
+      let autoBookingId = "";
+      try {
+        autoBookingId = await createBooking(userId, matchResult.bestMatch.id, {
+          price: finalPrice,
+          date: bookingDate,
+          notes: `[Auto Recovery] Alternate booking created automatically after original booking ${bookingId} was cancelled/declined by ${originalProviderName}.`
+        });
+        console.log(`[Recovery Flow] Successfully created automatic alternate booking ID: ${autoBookingId}`);
+      } catch (bookErr: any) {
+        console.error(`[Recovery Flow] Failed to create automatic alternate booking:`, bookErr.message);
+      }
+
+      // Proactively update user's session memory
+      userMemory.lastProviderId = matchResult.bestMatch.id;
+      userMemory.lastMatch = {
+        ...matchResult.bestMatch,
+        bookingId: autoBookingId
+      };
+      userMemory.currentCategory = category;
+
+      // Call Concierge Agent in RECOVERY state to generate the natural language apology and recommendation
+      recoveryState = {
+        userName,
+        userAddress,
+        bestMatch: {
+          ...matchResult.bestMatch,
+          bookingId: autoBookingId
+        },
+        originalProviderName: originalProviderName,
+        bookingStatus: 'RECOVERY',
+        history: userMemory.history
+      };
+
+      let conciergeReply = `${originalProviderName} ne booking cancel krdi ha. Hum ne ${matchResult.bestMatch.providerName} select kiya ha. Humne aapke liye automatic booking confirm krdi ha!`;
+      try {
+        const replyObj = await concierge.reply("Mera provider cancel hogya", recoveryState);
+        conciergeReply = replyObj.reply;
+      } catch (replyErr: any) {
+        console.warn(`[Recovery Flow] Concierge reply error:`, replyErr.message);
+      }
+
+      // Save this conversational message directly to chat session messages
+      userMemory.fullMessages.push({
+        sender: 'ai',
+        text: conciergeReply,
+        timestamp: new Date().toISOString(),
+        bestMatch: {
+          ...matchResult.bestMatch,
+          bookingId: autoBookingId
+        },
+        bookingConfirmed: true,
+        traces: [
+          { agent: 'ParserAgent', status: 'done', detail: 'System alert: Provider cancellation event detected.' },
+          { agent: 'MatchmakerAgent', status: 'done', detail: 'Auto-found next-best provider.', thinking: `Cancelled: ${originalProviderName} | Selected: ${matchResult.bestMatch.providerName}` },
+          { agent: 'PricingAgent', status: 'done', detail: 'Retrieved pricing quote.', thinking: `Price: Rs. ${finalPrice}` },
+          { agent: 'ConciergeAgent', status: 'done', detail: 'Formulated recovery recommendation.' }
+        ]
+      });
+
+      // Save chat session to Firestore
+      try {
+        await saveChatSession(
+          userMemory.chatSessionId,
+          userId,
+          userName,
+          userMemory.fullMessages,
+          {
+            serviceId: matchResult.bestMatch.id,
+            category: category,
+            lastMessage: conciergeReply
+          }
+        );
+      } catch (saveErr: any) {
+        console.warn(`[Recovery Flow] Failed to save chat session:`, saveErr.message);
+      }
+
+      chatMemory.set(userId, userMemory);
+
+      // Define notification message
+      recoveryNotificationMsg = `[Recovery Alert] Hum maazrat chahtey hain, ${originalProviderName} ne aapki booking cancel kar di hai. Humne aapke liye automatically next-best provider ${matchResult.bestMatch.providerName} ko book kar diya hai! Booking ID: ${autoBookingId}`;
+
+    } else {
+      // CASE B: No backup provider found
+      console.log(`[Recovery Flow] No backup provider found in category '${category}' in '${userAddress}'`);
+      
+      userMemory.lastProviderId = null;
+      userMemory.lastMatch = null;
+
+      recoveryState = {
+        userName,
+        userAddress,
+        bestMatch: null,
+        originalProviderName: originalProviderName,
+        bookingStatus: 'RECOVERY_NO_MATCH',
+        history: userMemory.history
+      };
+
+      let conciergeReply = `Hum maazrat chahtey hain, ${originalProviderName} ne booking cancel kar di hai. Is waqt koi aur provider available nahi hai.`;
+      try {
+        const replyObj = await concierge.reply("Mera provider cancel hogya aur koi aur nahi mila", recoveryState);
+        conciergeReply = replyObj.reply;
+      } catch (replyErr: any) {
+        console.warn(`[Recovery Flow] Concierge reply error:`, replyErr.message);
+      }
+
+      userMemory.fullMessages.push({
+        sender: 'ai',
+        text: conciergeReply,
+        timestamp: new Date().toISOString(),
+        bestMatch: null,
+        bookingConfirmed: false,
+        traces: [
+          { agent: 'ParserAgent', status: 'done', detail: 'System alert: Provider cancellation event detected.' },
+          { agent: 'MatchmakerAgent', status: 'done', detail: 'No other active providers available in this city.', thinking: `Cancelled: ${originalProviderName} | Backup: None` },
+          { agent: 'ConciergeAgent', status: 'done', detail: 'Formulated cancellation response.' }
+        ]
+      });
+
+      // Save chat session to Firestore
+      try {
+        await saveChatSession(
+          userMemory.chatSessionId,
+          userId,
+          userName,
+          userMemory.fullMessages,
+          {
+            category: category,
+            lastMessage: conciergeReply
+          }
+        );
+      } catch (saveErr: any) {
+        console.warn(`[Recovery Flow] Failed to save chat session:`, saveErr.message);
+      }
+
+      chatMemory.set(userId, userMemory);
+
+      // Define notification message
+      recoveryNotificationMsg = `[Recovery Alert] Hum maazrat chahtey hain, ${originalProviderName} ne booking cancel kar di hai. Is waqt koi aur back-up provider available nahi hai.`;
+    }
+
+    // 3. Write Recovery Notification Document to Firestore (type: 'recovery')
+    try {
+      const notificationsCol = collection(db, 'notifications');
+      const docId = `recovery_${bookingId}_${Date.now()}`;
+      await retryDb(() => setDoc(doc(notificationsCol, docId), {
+        bookingId: bookingId,
+        userId: userId,
+        message: recoveryNotificationMsg,
+        timestamp: new Date().toISOString(),
+        type: 'recovery'
+      }));
+      console.log(`[Recovery Flow] Proactive push notification saved successfully for user UID: ${userId}`);
+    } catch (notifErr: any) {
+      console.warn(`[Recovery Flow] Failed to save recovery notification:`, notifErr.message);
+    }
+
+    return res.json({
+      success: true,
+      reliabilityScore: newReliabilityScore,
+      rating: newRating,
+      recoveryMatch: matchResult?.bestMatch || null,
+      message: isPending
+        ? "Booking declined by provider. Penalty skipped. Proactive recovery triggered."
+        : "Booking cancelled by provider. Reliability score and rating penalized. Proactive recovery triggered."
+    });
+
+  } catch (error: any) {
+    console.error("[Provider Cancel Route] Error:", error.message);
+    res.status(500).json({ error: "Failed to process cancellation" });
+  }
+});
+
+// 3. Complete Endpoint: Marks booking as successfully completed
+app.post('/api/bookings/:id/complete', async (req, res) => {
+  try {
+    const bookingId = req.params.id;
+    const bookingRef = doc(db, 'bookings', bookingId);
+    const bookingSnap = await retryDb(() => getDoc(bookingRef));
+
+    if (!bookingSnap.exists()) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+
+    const bookingData = bookingSnap.data();
+    const serviceId = bookingData.serviceId;
+
+    if (!serviceId) {
+      return res.status(400).json({ error: "Booking does not have a valid serviceId" });
+    }
+
+    // Update booking status
+    await retryDb(() => updateDoc(bookingRef, {
+      status: 'completed',
+      completedAt: Date.now()
+    }));
+
+    // Update completed bookings count
+    const serviceRef = doc(db, 'services', serviceId);
+    const serviceSnap = await retryDb(() => getDoc(serviceRef));
+
+    if (serviceSnap.exists()) {
+      const serviceData = serviceSnap.data();
+      const completedCount = (serviceData.totalCompletedBookings || 0) + 1;
+
+      await retryDb(() => updateDoc(serviceRef, {
+        totalCompletedBookings: completedCount
+      }));
+
+      console.log(`[Booking Completed] Booking ID: ${bookingId} | Total Completed Bookings: ${completedCount}`);
+      return res.json({
+        success: true,
+        totalCompletedBookings: completedCount,
+        message: "Booking marked as successfully completed."
+      });
+    }
+
+    res.json({ success: true, message: "Booking completed, but provider service profile not found." });
+  } catch (error: any) {
+    console.error("[Complete Route] Error:", error.message);
+    res.status(500).json({ error: "Failed to mark completion" });
   }
 });
 

@@ -18,8 +18,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import * as ImagePicker from 'expo-image-picker';
-import { GoogleMaps, AppleMaps } from 'expo-maps';
 import * as Location from 'expo-location';
+
+let GoogleMaps: any = null;
+let AppleMaps: any = null;
+try {
+  const Maps = require('expo-maps');
+  GoogleMaps = Maps.GoogleMaps;
+  AppleMaps = Maps.AppleMaps;
+} catch (e) {
+  console.warn("expo-maps native module is not available in this environment.");
+}
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { THEME } from '../../theme';
 import { Typography } from '../../components/ui/Typography';
@@ -361,7 +370,7 @@ export default function ProfileScreen() {
             </Typography>
           </View>
           
-          {Platform.OS === 'android' ? (
+          {GoogleMaps && Platform.OS === 'android' ? (
             <GoogleMaps.View
               style={styles.map}
               cameraPosition={{
@@ -382,7 +391,7 @@ export default function ProfileScreen() {
                     ]
                   : []
               }
-              onMapClick={(e) => {
+              onMapClick={(e: any) => {
                 if (e.coordinates.latitude !== undefined && e.coordinates.longitude !== undefined) {
                   setLocation({
                     latitude: e.coordinates.latitude,
@@ -391,7 +400,7 @@ export default function ProfileScreen() {
                 }
               }}
             />
-          ) : (
+          ) : AppleMaps && Platform.OS === 'ios' ? (
             <AppleMaps.View
               style={styles.map}
               cameraPosition={{
@@ -412,7 +421,7 @@ export default function ProfileScreen() {
                     ]
                   : []
               }
-              onMapClick={(e) => {
+              onMapClick={(e: any) => {
                 if (e.coordinates.latitude !== undefined && e.coordinates.longitude !== undefined) {
                   setLocation({
                     latitude: e.coordinates.latitude,
@@ -421,6 +430,12 @@ export default function ProfileScreen() {
                 }
               }}
             />
+          ) : (
+            <View style={[styles.map, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#F1F5F9', padding: 20 }]}>
+              <Ionicons name="map-outline" size={48} color={THEME.colors.textMuted} style={{ marginBottom: 12 }} />
+              <Typography variant="body" color="muted" style={{ textAlign: 'center', marginBottom: 4 }}>Map is not available in Expo Go.</Typography>
+              <Typography variant="caption" color="muted" style={{ textAlign: 'center' }}>Please use the "Use Current Location" button below to set coordinates.</Typography>
+            </View>
           )}
 
           {/* Coordinates Display */}

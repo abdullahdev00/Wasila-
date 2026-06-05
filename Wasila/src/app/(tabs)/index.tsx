@@ -12,6 +12,7 @@ import { Card } from '../../components/ui/Card';
 import { useAuthStore } from '../../store/useAuthStore';
 import { db } from '../../lib/firebase';
 import { collection, query, where, onSnapshot, limit, orderBy, updateDoc, doc } from 'firebase/firestore';
+import { API_BASE_URL } from '../../lib/apiConfig';
 
 const { width } = Dimensions.get('window');
 
@@ -83,6 +84,11 @@ export default function HomeScreen() {
   // Provider Bookings States & Handlers
   const [providerBookings, setProviderBookings] = React.useState<any[]>([]);
   const [loadingProviderBookings, setLoadingProviderBookings] = React.useState(true);
+  const [providerServiceStats, setProviderServiceStats] = React.useState({
+    rating: 5.0,
+    reliabilityScore: 100,
+    completedJobsCount: 0
+  });
 
   React.useEffect(() => {
     if (role !== 'provider' || !user) {
@@ -112,6 +118,48 @@ export default function HomeScreen() {
     return () => unsubscribe();
   }, [role, user]);
 
+  React.useEffect(() => {
+    if (role !== 'provider' || !user) return;
+
+    const q = query(
+      collection(db, 'services'),
+      where('providerId', '==', user.uid)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (snapshot.empty) return;
+      
+      let totalRating = 0;
+      let totalReliability = 0;
+      let count = 0;
+      
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        if (data.rating !== undefined) {
+          totalRating += data.rating;
+        } else {
+          totalRating += 4.5;
+        }
+        if (data.reliabilityScore !== undefined) {
+          totalReliability += data.reliabilityScore;
+        } else {
+          totalReliability += 100;
+        }
+        count++;
+      });
+
+      setProviderServiceStats({
+        rating: count > 0 ? totalRating / count : 5.0,
+        reliabilityScore: count > 0 ? Math.round(totalReliability / count) : 100,
+        completedJobsCount: count > 0 ? snapshot.docs.reduce((sum, doc) => sum + (doc.data().totalCompletedBookings || 0), 0) : 0
+      });
+    }, (err) => {
+      console.error("Error fetching provider services stats:", err);
+    });
+
+    return () => unsubscribe();
+  }, [role, user]);
+
   const handleAcceptBooking = async (bookingId: string) => {
     try {
       await updateDoc(doc(db, 'bookings', bookingId), {
@@ -136,11 +184,16 @@ export default function HomeScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              await updateDoc(doc(db, 'bookings', bookingId), {
-                status: 'declined',
-                timestamp: new Date().toISOString()
+              const response = await fetch(`${API_BASE_URL}/bookings/${bookingId}/provider-cancel`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
               });
-              Alert.alert("Declined", "The booking request has been declined.");
+              const data = await response.json();
+              if (response.ok) {
+                Alert.alert("Declined", "The booking request has been declined.");
+              } else {
+                throw new Error(data.error || "Failed to decline booking request");
+              }
             } catch (error: any) {
               console.error("Error declining booking:", error);
               Alert.alert("Error", error.message);
@@ -149,6 +202,29 @@ export default function HomeScreen() {
         }
       ]
     );
+  };
+
+  const handleArrivedBooking = async (bookingId: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/bookings/${bookingId}/arrived`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await response.json();
+      if (response.ok) {
+        Alert.alert(
+          "Arrived", 
+          data.isLate 
+            ? "Aap late arrive hue hain! Reliability score deduct ho gaya hai." 
+            : "Aap time par arrive hue hain!"
+        );
+      } else {
+        throw new Error(data.error || "Failed to mark arrival");
+      }
+    } catch (error: any) {
+      console.error("Error marking arrival:", error);
+      Alert.alert("Error", error.message);
+    }
   };
 
   const handleCompleteBooking = async (bookingId: string) => {
@@ -161,11 +237,16 @@ export default function HomeScreen() {
           text: "Yes, Completed", 
           onPress: async () => {
             try {
-              await updateDoc(doc(db, 'bookings', bookingId), {
-                status: 'completed',
-                timestamp: new Date().toISOString()
+              const response = await fetch(`${API_BASE_URL}/bookings/${bookingId}/complete`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
               });
-              Alert.alert("Success", "Job marked as completed!");
+              const data = await response.json();
+              if (response.ok) {
+                Alert.alert("Success", "Job marked as completed!");
+              } else {
+                throw new Error(data.error || "Failed to mark completion");
+              }
             } catch (error: any) {
               console.error("Error completing booking:", error);
               Alert.alert("Error", error.message);
@@ -433,7 +514,7 @@ export default function HomeScreen() {
 
   const renderProviderDashboard = () => {
     const pendingRequests = providerBookings.filter(b => b.status === 'pending' || b.status === 'rescheduled');
-    const ongoingTasks = providerBookings.filter(b => b.status === 'accepted');
+    const ongoingTasks = providerBookings.filter(b => b.status === 'accepted' || b.status === 'arrived');
     
     const totalEarnings = providerBookings
       .filter(b => b.status === 'completed')
@@ -464,15 +545,16 @@ export default function HomeScreen() {
               <Ionicons name="star" size={22} color="#10B981" />
             </View>
             <Typography variant="caption" color="muted" style={{ marginTop: 10, fontSize: 12 }}>Rating</Typography>
-            <Typography variant="h2" weight="bold" color="secondary">4.9/5</Typography>
+            <Typography variant="h2" weight="bold" color="secondary">{providerServiceStats.rating.toFixed(1)}/5</Typography>
+            <Typography variant="caption" color="muted" style={{ fontSize: 10 }}>({providerServiceStats.completedJobsCount} jobs)</Typography>
           </View>
 
           <View style={[styles.statCard, { backgroundColor: '#FFF7ED' }]}>
             <View style={[styles.statIconWrapper, { backgroundColor: '#FFEDD5' }]}>
-              <Ionicons name="calendar" size={22} color="#F59E0B" />
+              <Ionicons name="ribbon" size={22} color="#F59E0B" />
             </View>
-            <Typography variant="caption" color="muted" style={{ marginTop: 10, fontSize: 12 }}>Jobs</Typography>
-            <Typography variant="h2" weight="bold" style={{ color: '#F59E0B' }}>{completedJobsCount}</Typography>
+            <Typography variant="caption" color="muted" style={{ marginTop: 10, fontSize: 12 }}>Reliability</Typography>
+            <Typography variant="h2" weight="bold" style={{ color: '#F59E0B' }}>{providerServiceStats.reliabilityScore}%</Typography>
           </View>
         </View>
 
@@ -539,10 +621,24 @@ export default function HomeScreen() {
                   <View style={{ flex: 1, marginLeft: 12 }}>
                     <Typography variant="body" weight="bold">{booking.serviceName || 'Service'}</Typography>
                     <Typography variant="caption" color="muted">Customer: {booking.userName} • {booking.date}</Typography>
+                    <Typography 
+                      variant="caption" 
+                      color={booking.status === 'arrived' ? 'secondary' : 'primary'} 
+                      weight="bold" 
+                      style={{ textTransform: 'uppercase', fontSize: 10, marginTop: 2 }}
+                    >
+                      Status: {booking.status}
+                    </Typography>
                   </View>
-                  <TouchableOpacity style={styles.viewJobBtn} onPress={() => handleCompleteBooking(booking.id)}>
-                    <Ionicons name="checkmark-circle-outline" size={22} color="#FFF" />
-                  </TouchableOpacity>
+                  {booking.status === 'accepted' ? (
+                    <TouchableOpacity style={styles.actionBtn} onPress={() => handleArrivedBooking(booking.id)}>
+                      <Typography variant="caption" color="inverse" weight="bold">Arrived</Typography>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity style={[styles.actionBtn, { backgroundColor: '#10B981' }]} onPress={() => handleCompleteBooking(booking.id)}>
+                      <Typography variant="caption" color="inverse" weight="bold">Complete</Typography>
+                    </TouchableOpacity>
+                  )}
                 </View>
               </Card>
             ))
@@ -579,7 +675,7 @@ export default function HomeScreen() {
           <Typography variant="body" color="muted">Good Morning, 👋</Typography>
           <Typography variant="h2" weight="bold" color="main">{user?.name || 'Guest'}</Typography>
         </View>
-        <TouchableOpacity style={styles.headerAvatar} onPress={() => router.push('/profile')}>
+        <TouchableOpacity style={styles.headerAvatar} onPress={() => router.push('/(tabs)/profile')}>
           {user?.photoURL ? (
             <Image 
               key={user.photoURL}
@@ -945,5 +1041,14 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     marginTop: 4,
     alignSelf: 'flex-start',
+  },
+  actionBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: '#4F46E5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    minWidth: 80,
   },
 });
