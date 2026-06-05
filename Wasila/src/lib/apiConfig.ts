@@ -3,6 +3,6 @@
  * Always connects to the deployed Cloud Run backend (works in both Dev + Prod)
  */
 
-export const API_BASE_URL = 'http://10.88.207.158:5000/api';
+export const API_BASE_URL = 'https://wasila-backend-546907715054.us-central1.run.app/api';
 
-console.log(`🔗 Wasila AI Backend (Local mobile test) → ${API_BASE_URL}`);
+console.log(`🔗 Wasila AI Deployed Backend (Cloud Run) → ${API_BASE_URL}`);
