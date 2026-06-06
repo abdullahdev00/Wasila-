@@ -557,7 +557,7 @@ export default function HomeScreen() {
               <Ionicons name="wallet" size={22} color="#4F46E5" />
             </View>
             <Typography variant="caption" color="muted" style={{ marginTop: 10, fontSize: 12 }}>Earnings</Typography>
-            <Typography variant="h2" weight="bold" color="primary">Rs. {totalEarnings.toLocaleString()}</Typography>
+            <Typography variant="h3" weight="bold" color="primary" numberOfLines={1} adjustsFontSizeToFit>{totalEarnings.toLocaleString()}</Typography>
           </View>
           
           <View style={[styles.statCard, { backgroundColor: '#ECFDF5' }]}>
@@ -565,7 +565,7 @@ export default function HomeScreen() {
               <Ionicons name="star" size={22} color="#10B981" />
             </View>
             <Typography variant="caption" color="muted" style={{ marginTop: 10, fontSize: 12 }}>Rating</Typography>
-            <Typography variant="h2" weight="bold" color="secondary">{providerServiceStats.rating.toFixed(1)}/5</Typography>
+            <Typography variant="h3" weight="bold" color="secondary" numberOfLines={1} adjustsFontSizeToFit>{providerServiceStats.rating.toFixed(1)}/5</Typography>
             <Typography variant="caption" color="muted" style={{ fontSize: 10 }}>({providerServiceStats.completedJobsCount} jobs)</Typography>
           </View>
 
@@ -574,7 +574,7 @@ export default function HomeScreen() {
               <Ionicons name="ribbon" size={22} color="#F59E0B" />
             </View>
             <Typography variant="caption" color="muted" style={{ marginTop: 10, fontSize: 12 }}>Reliability</Typography>
-            <Typography variant="h2" weight="bold" style={{ color: '#F59E0B' }}>{providerServiceStats.reliabilityScore}%</Typography>
+            <Typography variant="h3" weight="bold" style={{ color: '#F59E0B' }} numberOfLines={1} adjustsFontSizeToFit>{providerServiceStats.reliabilityScore}%</Typography>
           </View>
         </View>
 
@@ -1025,6 +1025,8 @@ const styles = StyleSheet.create({
   requestUser: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
+    marginRight: 12,
   },
   miniAvatar: {
     width: 44,
