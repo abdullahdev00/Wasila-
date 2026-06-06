@@ -27,6 +27,11 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Allow anyone to read/write transactions (used by backend/agents and frontend)
+    match /transactions/{document=**} {
+      allow read, write: if true;
+    }
+
     // Default rule for all other collections
     match /{document=**} {
       // Sirf authenticated users ko read/write allow karein

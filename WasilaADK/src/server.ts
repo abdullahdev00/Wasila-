@@ -1181,6 +1181,25 @@ app.post('/api/bookings/:id/arrived', async (req, res) => {
       isLate: isLate
     }));
 
+    // Create notification document in Firestore for the customer (user)
+    try {
+      const notificationsCol = collection(db, 'notifications');
+      const providerName = bookingData.providerName || 'Provider';
+      const notificationData = {
+        userId: bookingData.userId, // Target the customer
+        title: "Provider Arrived",
+        message: `Aap ke provider ${providerName} location par pahunch chuke hain.`,
+        type: 'provider_arrived',
+        bookingId: bookingId,
+        timestamp: new Date().toISOString(),
+        read: false
+      };
+      await retryDb(() => addDoc(notificationsCol, notificationData));
+      console.log(`[Provider Arrived Notification] Notification created for customer ${bookingData.userId}`);
+    } catch (err: any) {
+      console.error(`[Provider Arrived Notification Error] Failed to create notification:`, err.message);
+    }
+
     // Fetch and update provider's metrics in the services collection
     const serviceRef = doc(db, 'services', serviceId);
     const serviceSnap = await retryDb(() => getDoc(serviceRef));
@@ -1650,12 +1669,12 @@ app.post('/api/users/:id/deposit', async (req, res) => {
     const userRef = doc(db, 'users', userId);
     const userSnap = await retryDb(() => getDoc(userRef));
     
-    let walletBalance = 5000;
+    let walletBalance = 0;
     let userName = 'Guest User';
 
     if (userSnap.exists()) {
       const data = userSnap.data();
-      walletBalance = data.walletBalance !== undefined ? data.walletBalance : 5000;
+      walletBalance = data.walletBalance !== undefined ? data.walletBalance : 0;
       userName = data.name || userName;
     }
 
@@ -1666,16 +1685,20 @@ app.post('/api/users/:id/deposit', async (req, res) => {
     }));
 
     // Log transaction
-    await logTransaction(
-      userId,
-      userName,
-      'system',
-      'Wasila Platform',
-      'deposit_simulation',
-      amount,
-      'deposit',
-      `Rs. ${amount.toLocaleString()} deposited via simulation card`
-    );
+    try {
+      await logTransaction(
+        userId,
+        userName,
+        'system',
+        'Wasila Platform',
+        'deposit_simulation',
+        amount,
+        'deposit',
+        `Rs. ${amount.toLocaleString()} deposited via simulation card`
+      );
+    } catch (logErr: any) {
+      console.warn(`[Deposit Simulation Route] Transaction log skipped/failed:`, logErr.message);
+    }
 
     console.log(`[Deposit Simulation] Deposited Rs. ${amount} to user ${userId}. New balance: Rs. ${newWalletBalance}`);
     

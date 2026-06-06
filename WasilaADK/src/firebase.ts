@@ -265,12 +265,6 @@ export async function logTransaction(
       console.log(`[logTransaction] Skipping logging transaction for guest: ${userId}`);
       return 'skipped';
     }
-    const userRef = doc(db, 'users', userId);
-    const userSnap = await getDoc(userRef);
-    let existingTransactions: any[] = [];
-    if (userSnap.exists()) {
-      existingTransactions = userSnap.data().transactions || [];
-    }
 
     const txId = 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
     const newTransaction = {
@@ -286,13 +280,10 @@ export async function logTransaction(
       timestamp: new Date().toISOString()
     };
 
-    const updatedTransactions = [newTransaction, ...existingTransactions].slice(0, 50);
+    const transactionsCol = collection(db, 'transactions');
+    await addDoc(transactionsCol, newTransaction);
 
-    await setDoc(userRef, {
-      transactions: updatedTransactions
-    }, { merge: true });
-
-    console.log(`[Transaction Logged] User: ${userName} | Type: ${type} | Amount: Rs. ${amount}`);
+    console.log(`[Transaction Logged in Collection] User: ${userName} | Type: ${type} | Amount: Rs. ${amount}`);
     return txId;
   } catch (err) {
     console.error(`[logTransaction] Error logging transaction:`, err);
@@ -310,13 +301,13 @@ export async function holdBookingPayment(
   try {
     const userRef = doc(db, 'users', userId);
     const userSnap = await getDoc(userRef);
-    let walletBalance = 5000;
+    let walletBalance = 0;
     let holdingBalance = 0;
     let userName = 'Guest User';
 
     if (userSnap.exists()) {
       const data = userSnap.data();
-      walletBalance = data.walletBalance !== undefined ? data.walletBalance : 5000;
+      walletBalance = data.walletBalance !== undefined ? data.walletBalance : 0;
       holdingBalance = data.holdingBalance !== undefined ? data.holdingBalance : 0;
       userName = data.name || userName;
     }
@@ -334,16 +325,21 @@ export async function holdBookingPayment(
       paymentStatus: 'holding'
     });
 
-    await logTransaction(
-      userId,
-      userName,
-      providerId,
-      providerName,
-      bookingId,
-      price,
-      'payment_hold',
-      `Rs. ${price.toLocaleString()} hold set for service with ${providerName}`
-    );
+    try {
+      await logTransaction(
+        userId,
+        userName,
+        providerId,
+        providerName,
+        bookingId,
+        price,
+        'payment_hold',
+        `Rs. ${price.toLocaleString()} hold set for service with ${providerName}`
+      );
+    } catch (logErr: any) {
+      console.warn(`[holdBookingPayment] Transaction log skipped/failed:`, logErr.message);
+    }
+    
     console.log(`[Wallet ESCROW Hold] Deducted Rs. ${price} from ${userName}'s wallet. New Wallet: Rs. ${newWalletBalance}, New Holding: Rs. ${newHoldingBalance}`);
   } catch (err) {
     console.error(`[holdBookingPayment] Failed to hold booking payment for user ${userId}:`, err);
@@ -362,18 +358,22 @@ export async function releaseBookingPayment(
     const userRef = doc(db, 'users', userId);
     const userSnap = await getDoc(userRef);
     let holdingBalance = 0;
+    let totalSpend = 0;
     let userName = 'Guest User';
 
     if (userSnap.exists()) {
       const data = userSnap.data();
       holdingBalance = data.holdingBalance !== undefined ? data.holdingBalance : 0;
+      totalSpend = data.totalSpend !== undefined ? data.totalSpend : 0;
       userName = data.name || userName;
     }
 
     const newHoldingBalance = Math.max(0, holdingBalance - price);
+    const newTotalSpend = totalSpend + price;
 
     await setDoc(userRef, {
-      holdingBalance: newHoldingBalance
+      holdingBalance: newHoldingBalance,
+      totalSpend: newTotalSpend
     }, { merge: true });
 
     const serviceRef = doc(db, 'services', providerId);
@@ -391,16 +391,21 @@ export async function releaseBookingPayment(
       paymentStatus: 'released'
     });
 
-    await logTransaction(
-      userId,
-      userName,
-      providerId,
-      providerName,
-      bookingId,
-      price,
-      'payment_release',
-      `Rs. ${price.toLocaleString()} released to provider ${providerName}`
-    );
+    try {
+      await logTransaction(
+        userId,
+        userName,
+        providerId,
+        providerName,
+        bookingId,
+        price,
+        'payment_release',
+        `Rs. ${price.toLocaleString()} released to provider ${providerName}`
+      );
+    } catch (logErr: any) {
+      console.warn(`[releaseBookingPayment] Transaction log skipped/failed:`, logErr.message);
+    }
+    
     console.log(`[Wallet ESCROW Release] Released Rs. ${price} hold funds to ${providerName}. New Customer Holding: Rs. ${newHoldingBalance}`);
   } catch (err) {
     console.error(`[releaseBookingPayment] Failed to release payment:`, err);
@@ -418,13 +423,13 @@ export async function refundBookingPayment(
   try {
     const userRef = doc(db, 'users', userId);
     const userSnap = await getDoc(userRef);
-    let walletBalance = 5000;
+    let walletBalance = 0;
     let holdingBalance = 0;
     let userName = 'Guest User';
 
     if (userSnap.exists()) {
       const data = userSnap.data();
-      walletBalance = data.walletBalance !== undefined ? data.walletBalance : 5000;
+      walletBalance = data.walletBalance !== undefined ? data.walletBalance : 0;
       holdingBalance = data.holdingBalance !== undefined ? data.holdingBalance : 0;
       userName = data.name || userName;
     }
@@ -442,16 +447,21 @@ export async function refundBookingPayment(
       paymentStatus: 'refunded'
     });
 
-    await logTransaction(
-      userId,
-      userName,
-      providerId,
-      providerName,
-      bookingId,
-      price,
-      'refund',
-      `Rs. ${price.toLocaleString()} refunded for cancellation of booking with ${providerName}`
-    );
+    try {
+      await logTransaction(
+        userId,
+        userName,
+        providerId,
+        providerName,
+        bookingId,
+        price,
+        'refund',
+        `Rs. ${price.toLocaleString()} refunded for cancellation of booking with ${providerName}`
+      );
+    } catch (logErr: any) {
+      console.warn(`[refundBookingPayment] Transaction log skipped/failed:`, logErr.message);
+    }
+    
     console.log(`[Wallet ESCROW Refund] Refunded Rs. ${price} back to ${userName}'s wallet. New Wallet: Rs. ${newWalletBalance}, New Holding: Rs. ${newHoldingBalance}`);
   } catch (err) {
     console.error(`[refundBookingPayment] Failed to refund payment:`, err);
@@ -461,14 +471,14 @@ export async function refundBookingPayment(
 
 export async function getUserBalances(userId: string) {
   if (!userId || userId === 'guest' || userId.startsWith('test-user-')) {
-    return { walletBalance: 5000, holdingBalance: 0 };
+    return { walletBalance: 0, holdingBalance: 0 };
   }
   try {
     const userRef = doc(db, 'users', userId);
     const userSnap = await getDoc(userRef);
     if (userSnap.exists()) {
       const data = userSnap.data();
-      const walletBalance = data.walletBalance !== undefined ? data.walletBalance : 5000;
+      const walletBalance = data.walletBalance !== undefined ? data.walletBalance : 0;
       const holdingBalance = data.holdingBalance !== undefined ? data.holdingBalance : 0;
       
       if (data.walletBalance === undefined || data.holdingBalance === undefined) {
@@ -480,6 +490,6 @@ export async function getUserBalances(userId: string) {
   } catch (err) {
     console.warn(`[getUserBalances] Failed to fetch balances for ${userId}:`, err);
   }
-  return { walletBalance: 5000, holdingBalance: 0 };
+  return { walletBalance: 0, holdingBalance: 0 };
 }
 

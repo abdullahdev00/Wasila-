@@ -25,6 +25,7 @@ const getCategoryConfig = (category: string) => {
 const getStatusBadgeStyle = (status: string) => {
   const s = status?.toLowerCase() || '';
   if (s === 'accepted') return { bg: '#10B98120', text: '#10B981', label: 'Accepted' };
+  if (s === 'arrived') return { bg: '#06B6D420', text: '#06B6D4', label: 'Arrived' };
   if (s === 'declined' || s.includes('cancel')) return { bg: '#EF444420', text: '#EF4444', label: 'Cancelled' };
   if (s === 'completed') return { bg: '#3B82F620', text: '#3B82F6', label: 'Completed' };
   if (s === 'rescheduled') return { bg: '#8B5CF620', text: '#8B5CF6', label: 'Rescheduled' };
@@ -50,7 +51,7 @@ export default function BookingsScreen() {
   const [dismissedBookingIds, setDismissedBookingIds] = React.useState<string[]>([]);
 
   // Wallet State
-  const [walletBalance, setWalletBalance] = React.useState(5000);
+  const [walletBalance, setWalletBalance] = React.useState(0);
   const [holdingBalance, setHoldingBalance] = React.useState(0);
   const [transactions, setTransactions] = React.useState<any[]>([]);
   const [walletModalVisible, setWalletModalVisible] = React.useState(false);
@@ -92,23 +93,39 @@ export default function BookingsScreen() {
   React.useEffect(() => {
     if (!user) return;
 
-    // Listen to user doc for balances and transactions
+    // Listen to user doc for balances
     const userRef = doc(db, 'users', user.uid);
     const unsubUser = onSnapshot(userRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        setWalletBalance(data.walletBalance !== undefined ? data.walletBalance : 5000);
+        setWalletBalance(data.walletBalance !== undefined ? data.walletBalance : 0);
         setHoldingBalance(data.holdingBalance !== undefined ? data.holdingBalance : 0);
-        setTransactions(data.transactions || []);
       } else {
-        setWalletBalance(5000);
+        setWalletBalance(0);
         setHoldingBalance(0);
-        setTransactions([]);
       }
+    });
+
+    // Listen to separate transactions collection
+    const txQuery = query(
+      collection(db, 'transactions'),
+      where('userId', '==', user.uid)
+    );
+    const unsubTx = onSnapshot(txQuery, (snapshot) => {
+      const fetchedTxs = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as any[];
+      // Sort in-memory descending by timestamp
+      fetchedTxs.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
+      setTransactions(fetchedTxs);
+    }, (err) => {
+      console.error("[Transactions Listener] Error fetching transactions:", err);
     });
 
     return () => {
       unsubUser();
+      unsubTx();
     };
   }, [user]);
 
@@ -132,7 +149,7 @@ export default function BookingsScreen() {
       try {
         const userRef = doc(db, 'users', user.uid);
         const userSnap = await getDoc(userRef);
-        const currentWallet = userSnap.exists() ? (userSnap.data().walletBalance ?? 5000) : 5000;
+        const currentWallet = userSnap.exists() ? (userSnap.data().walletBalance ?? 0) : 0;
         const name = userSnap.exists() ? (userSnap.data().name || 'Guest User') : 'Guest User';
         
         await updateDoc(userRef, {
@@ -253,10 +270,9 @@ export default function BookingsScreen() {
               } else {
                 const userRef = doc(db, 'users', user.uid);
                 const userSnap = await getDoc(userRef);
-                const currentWallet = userSnap.exists() ? (userSnap.data().walletBalance ?? 5000) : 5000;
+                const currentWallet = userSnap.exists() ? (userSnap.data().walletBalance ?? 0) : 0;
                 const currentHolding = userSnap.exists() ? (userSnap.data().holdingBalance ?? 0) : 0;
                 const refundAmount = booking.price || 0;
-                const existingTransactions = userSnap.exists() ? (userSnap.data().transactions || []) : [];
 
                 const txId = 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
                 const userName = userSnap.exists() ? (userSnap.data().name || 'Customer') : 'Customer';
@@ -273,13 +289,12 @@ export default function BookingsScreen() {
                   timestamp: new Date().toISOString()
                 };
 
-                const updatedTransactions = [newTransaction, ...existingTransactions].slice(0, 50);
-
                 await updateDoc(userRef, {
                   walletBalance: currentWallet + refundAmount,
-                  holdingBalance: Math.max(0, currentHolding - refundAmount),
-                  transactions: updatedTransactions
+                  holdingBalance: Math.max(0, currentHolding - refundAmount)
                 });
+
+                await addDoc(collection(db, 'transactions'), newTransaction);
 
                 await updateDoc(doc(db, 'bookings', booking.id), {
                   status: 'declined',
