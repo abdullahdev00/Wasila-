@@ -8,7 +8,8 @@ import { ActionAgent } from './agents/ActionAgent';
 import { PricingAgent } from './agents/PricingAgent';
 import { SupplierAgent } from './agents/SupplierAgent';
 import { CustomerNegotiatorAgent } from './agents/CustomerNegotiatorAgent';
-import { getUserName, fetchUserBookings, db, saveChatSession, fetchLastChatSession, createBooking, releaseBookingPayment, refundBookingPayment, logTransaction } from './firebase';
+import { DisputeAgent } from './agents/DisputeAgent';
+import { getUserName, fetchUserBookings, db, saveChatSession, fetchLastChatSession, createBooking, releaseBookingPayment, refundBookingPayment, logTransaction, createDispute } from './firebase';
 import { getDoc, doc, setDoc, updateDoc, collection, getDocs, addDoc } from 'firebase/firestore/lite';
 import { callOpenRouter } from './utils/openRouter';
 import { parseBookingDateToTimestamp } from './utils/dateParser';
@@ -35,6 +36,7 @@ const actionAgent = new ActionAgent();
 const pricingAgent = new PricingAgent();
 const supplierAgent = new SupplierAgent();
 const customerNegotiator = new CustomerNegotiatorAgent();
+const disputeAgent = new DisputeAgent();
 
 // --- IN-MEMORY CHAT STATE ---
 // Stores the last message and provider for each user session without a database
@@ -1710,6 +1712,126 @@ app.post('/api/users/:id/deposit', async (req, res) => {
   } catch (error: any) {
     console.error("[Deposit Simulation Route] Error:", error.message);
     res.status(500).json({ error: "Failed to simulate deposit" });
+  }
+});
+
+app.post('/api/disputes', async (req, res) => {
+  try {
+    const { bookingId, issueType, details } = req.body;
+
+    if (!bookingId || !issueType || !details) {
+      return res.status(400).json({ error: "Missing required dispute fields (bookingId, issueType, details)" });
+    }
+
+    console.log(`\n[Dispute Endpoint] Processing dispute for booking: ${bookingId} | Issue: ${issueType}...`);
+
+    // 1. Fetch booking details
+    const bookingRef = doc(db, 'bookings', bookingId);
+    const bookingSnap = await retryDb(() => getDoc(bookingRef));
+
+    if (!bookingSnap.exists()) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+
+    const bookingData = bookingSnap.data();
+    const serviceId = bookingData.serviceId;
+
+    if (!serviceId) {
+      return res.status(400).json({ error: "Booking does not have a valid serviceId" });
+    }
+
+    // 2. Run DisputeAgent to evaluate the claim
+    const decision = await disputeAgent.evaluateDispute(issueType, details, {
+      id: bookingSnap.id,
+      ...bookingData
+    });
+
+    console.log(`[Dispute Agent Decision]:`, decision);
+
+    if (decision.isValid) {
+      // Execute Resolution Actions
+      if (decision.action === 'refund_full') {
+        // A. Update booking status in database
+        await retryDb(() => updateDoc(bookingRef, {
+          status: 'cancelled_by_dispute',
+          disputedAt: Date.now()
+        }));
+
+        // B. Trigger full escrow refund back to the customer's wallet
+        try {
+          await refundBookingPayment(
+            bookingData.userId,
+            bookingId,
+            bookingData.price || 0,
+            serviceId,
+            bookingData.providerName || 'Professional'
+          );
+        } catch (escrowErr: any) {
+          console.warn(`[Dispute Route] Refund failed for booking ${bookingId}:`, escrowErr.message);
+        }
+
+        // C. Fetch and penalize provider's reliability score in the services collection
+        const serviceRef = doc(db, 'services', serviceId);
+        const serviceSnap = await retryDb(() => getDoc(serviceRef));
+
+        if (serviceSnap.exists()) {
+          const serviceData = serviceSnap.data();
+          const lateArrivals = serviceData.lateArrivals || 0;
+          const cancellations = (serviceData.cancellations || 0) + 1; // Count as a cancellation
+          
+          // Apply custom penalty (reliability penalty, e.g. -15%)
+          const penaltyDeduction = decision.providerPenalty || 15;
+          const newScore = Math.max(0, (serviceData.reliabilityScore !== undefined ? serviceData.reliabilityScore : 100) - penaltyDeduction);
+
+          await retryDb(() => updateDoc(serviceRef, {
+            cancellations: cancellations,
+            reliabilityScore: newScore
+          }));
+          console.log(`[Dispute Penalty] Deducted ${penaltyDeduction}% from provider reliability. New Score: ${newScore}%`);
+        }
+      }
+
+      // 3. Save the resolved dispute record in Firestore `/disputes`
+      await createDispute(
+        bookingId,
+        issueType,
+        details,
+        decision.action,
+        decision.refundAmount,
+        decision.verdictSummary
+      );
+
+      return res.json({
+        success: true,
+        isValid: true,
+        verdict: decision.verdictSummary,
+        refundAmount: decision.refundAmount,
+        action: decision.action
+      });
+
+    } else {
+      // Reject Dispute
+      await createDispute(
+        bookingId,
+        issueType,
+        details,
+        'rejected',
+        0,
+        decision.verdictSummary
+      );
+
+      return res.json({
+        success: true,
+        isValid: false,
+        verdict: decision.verdictSummary,
+        refundAmount: 0,
+        action: 'rejected'
+      });
+    }
+
+  } catch (error: any) {
+    console.error("[Dispute API Route Error]:", error.message);
+    res.status(500).json({ error: `Failed to evaluate dispute: ${error.message}` });
   }
 });
 

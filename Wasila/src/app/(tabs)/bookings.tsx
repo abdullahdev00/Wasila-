@@ -62,6 +62,18 @@ export default function BookingsScreen() {
   const [rescheduling, setRescheduling] = React.useState(false);
   const [ratingSubmitting, setRatingSubmitting] = React.useState(false);
 
+  // Dispute Modal State
+  const [disputeModalVisible, setDisputeModalVisible] = React.useState(false);
+  const [selectedBookingToDispute, setSelectedBookingToDispute] = React.useState<any | null>(null);
+  const [disputeIssueType, setDisputeIssueType] = React.useState<'no_show' | 'overcharge' | 'late_arrival' | 'poor_quality'>('no_show');
+  const [disputeDetails, setDisputeDetails] = React.useState('');
+  const [disputeSubmitting, setDisputeSubmitting] = React.useState(false);
+  
+  // Dispute Verdict Modal State
+  const [verdictModalVisible, setVerdictModalVisible] = React.useState(false);
+  const [disputeVerdict, setDisputeVerdict] = React.useState('');
+  const [disputeRefundAmount, setDisputeRefundAmount] = React.useState(0);
+
   React.useEffect(() => {
     if (!user) {
       console.log("[Bookings Debug] No user is logged in.");
@@ -357,6 +369,49 @@ export default function BookingsScreen() {
     }
   };
 
+  const handleOpenDispute = (booking: any) => {
+    setSelectedBookingToDispute(booking);
+    setDisputeIssueType('no_show');
+    setDisputeDetails('');
+    setDisputeModalVisible(true);
+  };
+
+  const handleDisputeSubmit = async () => {
+    if (!selectedBookingToDispute) return;
+    if (!disputeDetails.trim()) {
+      Alert.alert("Ghalti", "Bara-e-meharbani shikayat ki tafseel likhein.");
+      return;
+    }
+
+    setDisputeSubmitting(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/disputes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookingId: selectedBookingToDispute.id,
+          issueType: disputeIssueType,
+          details: disputeDetails
+        })
+      });
+
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setDisputeVerdict(data.verdict);
+        setDisputeRefundAmount(data.refundAmount || 0);
+        setDisputeModalVisible(false);
+        setVerdictModalVisible(true);
+      } else {
+        throw new Error(data.error || "Dispute processing failed");
+      }
+    } catch (error: any) {
+      console.error("Error submitting dispute:", error);
+      Alert.alert("Ghalti", error.message || "Shikayat submit karne mein masla pesh aya.");
+    } finally {
+      setDisputeSubmitting(false);
+    }
+  };
+
   if (!user) {
     return (
       <View style={[styles.container, { justifyContent: 'center', alignItems: 'center', padding: 24 }]}>
@@ -483,6 +538,22 @@ export default function BookingsScreen() {
                       </TouchableOpacity>
                     </View>
                   )}
+
+                  {/* Dispute/Shikayat button for customer on active/completed bookings */}
+                  {user.role !== 'provider' && 
+                   ['accepted', 'arrived', 'completed'].includes(booking.status?.toLowerCase()) && (
+                    <View style={styles.disputeRow}>
+                      <TouchableOpacity 
+                        style={styles.disputeBtn} 
+                        onPress={() => handleOpenDispute(booking)}
+                      >
+                        <Ionicons name="warning-outline" size={16} color="#EF4444" />
+                        <Typography variant="caption" weight="bold" style={{ color: '#EF4444', marginLeft: 6 }}>
+                          Report Issue (Shikayat)
+                        </Typography>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </Card>
               );
             })
@@ -587,6 +658,183 @@ export default function BookingsScreen() {
                 )}
               </TouchableOpacity>
             </View>
+          </Card>
+        </View>
+      </Modal>
+
+      {/* Dispute Modal */}
+      <Modal
+        visible={disputeModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDisputeModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <Card customStyle={styles.modalCard}>
+            <Typography variant="h2" weight="bold" style={{ marginBottom: 8 }}>Shikayat Darj Karein</Typography>
+            <Typography variant="body" color="muted" style={{ marginBottom: 16 }}>
+              Apni booking ke mutaliq masla select karein aur tafseel faraham karein.
+            </Typography>
+            
+            {/* Issue Selection */}
+            <Typography variant="caption" weight="bold" style={{ marginBottom: 8, color: '#4F46E5' }}>MASLA SELECT KAREIN:</Typography>
+            
+            <View style={{ gap: 8, marginBottom: 16 }}>
+              {/* Option 1: No-Show (Active) */}
+              <TouchableOpacity 
+                style={[
+                  styles.issueOption, 
+                  disputeIssueType === 'no_show' && styles.issueOptionSelected
+                ]}
+                onPress={() => setDisputeIssueType('no_show')}
+              >
+                <Ionicons name="calendar-outline" size={20} color={disputeIssueType === 'no_show' ? '#FFF' : '#EF4444'} />
+                <Typography 
+                  variant="body" 
+                  weight="medium" 
+                  style={{ marginLeft: 8, color: disputeIssueType === 'no_show' ? '#FFF' : '#1E293B' }}
+                >
+                  Provider nahi aya (No-Show)
+                </Typography>
+              </TouchableOpacity>
+
+              {/* Option 2: Overcharge (Coming Soon) */}
+              <TouchableOpacity 
+                style={[
+                  styles.issueOption, 
+                  styles.issueOptionDisabled,
+                  disputeIssueType === 'overcharge' && styles.issueOptionSelected
+                ]}
+                onPress={() => {
+                  Alert.alert("Notice", "Ziada paise lene ki shikayat aglay chunk me active hogi. Abhi testing ke liye sirf 'Provider nahi aya' select karein.");
+                }}
+              >
+                <Ionicons name="cash-outline" size={20} color="#94A3B8" />
+                <Typography variant="body" style={{ marginLeft: 8, color: '#94A3B8' }}>
+                  Ziada paise liye (Overcharge) - Jald Asy
+                </Typography>
+              </TouchableOpacity>
+
+              {/* Option 3: Late Arrival (Coming Soon) */}
+              <TouchableOpacity 
+                style={[
+                  styles.issueOption, 
+                  styles.issueOptionDisabled
+                ]}
+                onPress={() => {
+                  Alert.alert("Notice", "Late aane ki shikayat aglay chunk me active hogi. Abhi testing ke liye sirf 'Provider nahi aya' select karein.");
+                }}
+              >
+                <Ionicons name="time-outline" size={20} color="#94A3B8" />
+                <Typography variant="body" style={{ marginLeft: 8, color: '#94A3B8' }}>
+                  Late aya (Late Arrival) - Jald Asy
+                </Typography>
+              </TouchableOpacity>
+
+              {/* Option 4: Poor Quality (Coming Soon) */}
+              <TouchableOpacity 
+                style={[
+                  styles.issueOption, 
+                  styles.issueOptionDisabled
+                ]}
+                onPress={() => {
+                  Alert.alert("Notice", "Kaam kharab hone ki shikayat aglay chunk me active hogi. Abhi testing ke liye sirf 'Provider nahi aya' select karein.");
+                }}
+              >
+                <Ionicons name="alert-circle-outline" size={20} color="#94A3B8" />
+                <Typography variant="body" style={{ marginLeft: 8, color: '#94A3B8' }}>
+                  Kaam kharab kiya (Poor Quality) - Jald Asy
+                </Typography>
+              </TouchableOpacity>
+            </View>
+
+            {/* Details Input */}
+            <Typography variant="caption" weight="bold" style={{ marginBottom: 6, color: '#4F46E5' }}>TAFSEEL (DETAILS):</Typography>
+            <TextInput
+              style={[styles.modalInput, { height: 80, textAlignVertical: 'top', paddingTop: 10 }]}
+              placeholder="Shikayat ki tafseel likhein, e.g., Plumber scheduled time par nahi aya aur call bhi attend nahi ki..."
+              placeholderTextColor="#94A3B8"
+              value={disputeDetails}
+              onChangeText={setDisputeDetails}
+              multiline
+            />
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity 
+                style={[styles.modalBtn, styles.modalCancelBtn]} 
+                onPress={() => setDisputeModalVisible(false)}
+              >
+                <Typography variant="body" weight="bold">Wapas</Typography>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.modalBtn, styles.modalSubmitBtn, disputeSubmitting && { opacity: 0.7 }]} 
+                onPress={handleDisputeSubmit}
+                disabled={disputeSubmitting}
+              >
+                {disputeSubmitting ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <Typography variant="body" color="inverse" weight="bold">Bheinjein</Typography>
+                )}
+              </TouchableOpacity>
+            </View>
+          </Card>
+        </View>
+      </Modal>
+
+      {/* Dispute Verdict Modal */}
+      <Modal
+        visible={verdictModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setVerdictModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <Card customStyle={styles.modalCard}>
+            <View style={{ alignItems: 'center', marginBottom: 16 }}>
+              <View style={{ 
+                width: 56, 
+                height: 56, 
+                borderRadius: 28, 
+                backgroundColor: disputeRefundAmount > 0 ? '#10B98115' : '#EF444415',
+                justifyContent: 'center',
+                alignItems: 'center',
+                marginBottom: 12
+              }}>
+                <Ionicons 
+                  name={disputeRefundAmount > 0 ? "checkmark-circle-outline" : "close-circle-outline"} 
+                  size={36} 
+                  color={disputeRefundAmount > 0 ? "#10B981" : "#EF4444"} 
+                />
+              </View>
+              <Typography variant="h2" weight="bold">Dispute Resolution</Typography>
+            </View>
+
+            <Typography variant="body" style={{ textAlign: 'center', marginBottom: 20, lineHeight: 22 }}>
+              {disputeVerdict}
+            </Typography>
+
+            {disputeRefundAmount > 0 && (
+              <View style={{ 
+                backgroundColor: '#F1F5F9', 
+                borderRadius: 12, 
+                padding: 16, 
+                marginBottom: 24,
+                alignItems: 'center'
+              }}>
+                <Typography variant="caption" color="muted">REFUNDED TO WALLET</Typography>
+                <Typography variant="h2" weight="bold" color="primary" style={{ marginTop: 4 }}>
+                  Rs. {disputeRefundAmount.toLocaleString()}
+                </Typography>
+              </View>
+            )}
+
+            <TouchableOpacity 
+              style={[styles.modalBtn, styles.modalSubmitBtn, { width: '100%' }]} 
+              onPress={() => setVerdictModalVisible(false)}
+            >
+              <Typography variant="body" color="inverse" weight="bold">Theek Hai</Typography>
+            </TouchableOpacity>
           </Card>
         </View>
       </Modal>
@@ -950,5 +1198,38 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  disputeRow: {
+    flexDirection: 'row',
+    marginTop: 12,
+  },
+  disputeBtn: {
+    flex: 1,
+    height: 40,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#EF444430',
+    backgroundColor: '#EF444408',
+    flexDirection: 'row',
+  },
+  issueOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  issueOptionSelected: {
+    borderColor: '#4F46E5',
+    backgroundColor: '#4F46E5',
+  },
+  issueOptionDisabled: {
+    opacity: 0.6,
+    backgroundColor: '#F1F5F9',
+    borderColor: '#E2E8F0',
   },
 });

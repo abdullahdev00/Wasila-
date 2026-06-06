@@ -529,3 +529,55 @@ export async function getUserBalances(userId: string) {
   return { walletBalance: 0, holdingBalance: 0 };
 }
 
+export async function createDispute(
+  bookingId: string,
+  issueType: 'overcharge' | 'no_show' | 'late_arrival' | 'poor_quality',
+  details: string,
+  resolutionAction: 'refund_full' | 'refund_difference' | 'refund_compensation' | 'logged_complaint' | 'rejected',
+  refundAmount: number,
+  verdictSummary: string
+): Promise<string> {
+  const disputesCol = collection(db, 'disputes');
+  
+  // Fetch booking details to get user & provider info
+  let userId = 'unknown_user';
+  let userName = 'Customer';
+  let providerId = 'unknown_provider';
+  let providerName = 'Provider';
+  
+  try {
+    const bookingSnap = await getDoc(doc(db, 'bookings', bookingId));
+    if (bookingSnap.exists()) {
+      const bData = bookingSnap.data();
+      userId = bData.userId || userId;
+      userName = bData.userName || userName;
+      providerId = bData.providerId || providerId;
+      providerName = bData.providerName || providerName;
+    }
+  } catch (err) {
+    console.warn(`[createDispute] Failed to load booking details for ${bookingId}:`, err);
+  }
+
+  const disputeId = 'disp_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+  const newDispute = {
+    id: disputeId,
+    bookingId,
+    userId,
+    userName,
+    providerId,
+    providerName,
+    issueType,
+    details,
+    status: 'resolved', // Auto-resolved by the AI Agent
+    resolutionAction,
+    refundAmount,
+    verdictSummary,
+    timestamp: new Date().toISOString()
+  };
+
+  await addDoc(disputesCol, newDispute);
+  console.log(`[Dispute Logged] Created dispute record ${disputeId} for booking ${bookingId}`);
+  return disputeId;
+}
+
+
