@@ -376,6 +376,43 @@ export async function releaseBookingPayment(
       totalSpend: newTotalSpend
     }, { merge: true });
 
+    // Fetch the booking document to get the provider's user account ID (UID)
+    const bookingRef = doc(db, 'bookings', bookingId);
+    const bookingSnap = await getDoc(bookingRef);
+    let providerUserId = '';
+    if (bookingSnap.exists()) {
+      providerUserId = bookingSnap.data().providerId || '';
+    }
+
+    // If we have a valid provider user ID, update their wallet balance as well
+    if (providerUserId && providerUserId !== 'guest') {
+      const providerUserRef = doc(db, 'users', providerUserId);
+      const providerUserSnap = await getDoc(providerUserRef);
+      let providerWalletBalance = 0;
+      if (providerUserSnap.exists()) {
+        providerWalletBalance = providerUserSnap.data().walletBalance !== undefined ? providerUserSnap.data().walletBalance : 0;
+      }
+      await setDoc(providerUserRef, {
+        walletBalance: providerWalletBalance + price
+      }, { merge: true });
+
+      // Log transaction for the provider
+      try {
+        await logTransaction(
+          providerUserId,
+          providerName,
+          'customer',
+          userName,
+          bookingId,
+          price,
+          'deposit',
+          `Rs. ${price.toLocaleString()} received from client ${userName}`
+        );
+      } catch (logErr: any) {
+        console.warn(`[releaseBookingPayment] Provider transaction log failed:`, logErr.message);
+      }
+    }
+
     const serviceRef = doc(db, 'services', providerId);
     const serviceSnap = await getDoc(serviceRef);
     let currentEarnings = 0;
@@ -386,7 +423,6 @@ export async function releaseBookingPayment(
       });
     }
 
-    const bookingRef = doc(db, 'bookings', bookingId);
     await updateDoc(bookingRef, {
       paymentStatus: 'released'
     });
