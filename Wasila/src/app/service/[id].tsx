@@ -14,7 +14,7 @@ import { Typography } from '../../components/ui/Typography';
 import { THEME } from '../../theme';
 import { BlurView } from 'expo-blur';
 import { db } from '../../lib/firebase';
-import { doc, getDoc, collection, addDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, addDoc, updateDoc } from 'firebase/firestore';
 import { ActivityIndicator, Alert } from 'react-native';
 import { useAuthStore } from '../../store/useAuthStore';
 
@@ -67,6 +67,21 @@ export default function ServiceDetailScreen() {
           onPress: async () => {
             setBookingLoading(true);
             try {
+              const userRef = doc(db, 'users', user.uid);
+              const userSnap = await getDoc(userRef);
+              const currentWallet = userSnap.exists() ? (userSnap.data().walletBalance ?? 0) : 0;
+              const currentHolding = userSnap.exists() ? (userSnap.data().holdingBalance ?? 0) : 0;
+              const price = parseFloat(service.price || '0');
+
+              if (currentWallet < price) {
+                setBookingLoading(false);
+                Alert.alert(
+                  "Insufficient Balance",
+                  `Aap ke wallet me Rs. ${price.toLocaleString()} nahi hain. Please bookings tab me ja kar deposit simulator ke zariye wallet balance add karein.`
+                );
+                return;
+              }
+
               const bookingsCol = collection(db, 'bookings');
               const newBooking = {
                 userId: user.uid,
@@ -75,19 +90,43 @@ export default function ServiceDetailScreen() {
                 serviceId: service.id,
                 serviceName: service.name,
                 category: service.category || 'General',
-                price: parseFloat(service.price || '0'),
+                price: price,
                 providerId: service.providerId || service.id,
                 providerName: service.providerName || 'Professional',
                 providerPhotoURL: service.providerPhotoURL || '',
                 status: 'pending',
+                paymentStatus: 'holding',
                 date: 'Tomorrow, 10:00 AM', // Default scheduled date
                 timestamp: new Date().toISOString(),
                 notes: 'Manual booking created via app.'
               };
 
               console.log("[Manual Booking] Creating booking:", newBooking);
-              await addDoc(bookingsCol, newBooking);
+              const docRef = await addDoc(bookingsCol, newBooking);
               
+              // Perform balance hold updates
+              await updateDoc(userRef, {
+                walletBalance: currentWallet - price,
+                holdingBalance: currentHolding + price
+              });
+
+              // Log transaction to separate transactions collection
+              const txId = 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+              const providerName = service.providerName || 'Professional';
+              const newTransaction = {
+                id: txId,
+                userId: user.uid,
+                userName: user.name || 'Customer',
+                providerId: service.providerId || service.id,
+                providerName: providerName,
+                bookingId: docRef.id,
+                amount: price,
+                type: 'payment_hold',
+                description: `Rs. ${price.toLocaleString()} hold set for service with ${providerName} (Manual Booking)`,
+                timestamp: new Date().toISOString()
+              };
+              await addDoc(collection(db, 'transactions'), newTransaction);
+
               Alert.alert(
                 "Booking Confirmed!",
                 `Your booking for ${service.name} has been successfully created.`,

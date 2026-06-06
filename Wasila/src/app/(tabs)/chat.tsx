@@ -120,6 +120,22 @@ const MessageBubble = ({ item }: { item: Message }) => {
       }
       const serviceData = serviceSnap.data();
 
+      // Escrow Hold check for manual booking
+      const userRef = doc(db, 'users', user.uid);
+      const userSnap = await getDoc(userRef);
+      const currentWallet = userSnap.exists() ? (userSnap.data().walletBalance ?? 0) : 0;
+      const currentHolding = userSnap.exists() ? (userSnap.data().holdingBalance ?? 0) : 0;
+      const price = match.pricePerHour || serviceData.price || 0;
+
+      if (currentWallet < price) {
+        setIsBookingLoading(false);
+        Alert.alert(
+          "Insufficient Balance",
+          `Aap ke wallet me Rs. ${price.toLocaleString()} nahi hain. Please bookings tab me ja kar deposit simulator ke zariye wallet balance add karein.`
+        );
+        return;
+      }
+
       const bookingsCol = collection(db, 'bookings');
       const newBooking = {
         userId: user.uid,
@@ -128,18 +144,42 @@ const MessageBubble = ({ item }: { item: Message }) => {
         serviceId: match.id,
         serviceName: serviceData.name || match.name,
         category: serviceData.category || match.category || 'General',
-        price: match.pricePerHour || serviceData.price || 0,
+        price: price,
         providerId: serviceData.providerId || match.id,
         providerName: serviceData.providerName || match.name,
         providerPhotoURL: serviceData.providerPhotoURL || '',
         status: 'pending',
+        paymentStatus: 'holding',
         date: `${selectedDate}, ${selectedSlot}`,
         timestamp: new Date().toISOString(),
         notes: 'Booking created via AI search suggestion card.'
       };
 
       console.log("[Chat Match Booking] Creating booking with slot:", newBooking);
-      await addDoc(bookingsCol, newBooking);
+      const docRef = await addDoc(bookingsCol, newBooking);
+
+      // Perform balance hold updates
+      await updateDoc(userRef, {
+        walletBalance: currentWallet - price,
+        holdingBalance: currentHolding + price
+      });
+
+      // Log transaction to separate transactions collection
+      const txId = 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+      const providerName = serviceData.providerName || match.name || 'Professional';
+      const newTransaction = {
+        id: txId,
+        userId: user.uid,
+        userName: user.name || 'Customer',
+        providerId: serviceData.providerId || match.id,
+        providerName: providerName,
+        bookingId: docRef.id,
+        amount: price,
+        type: 'payment_hold',
+        description: `Rs. ${price.toLocaleString()} hold set for service with ${providerName} (Conversational Booking)`,
+        timestamp: new Date().toISOString()
+      };
+      await addDoc(collection(db, 'transactions'), newTransaction);
       
       setIsBookingLoading(false);
       Alert.alert(

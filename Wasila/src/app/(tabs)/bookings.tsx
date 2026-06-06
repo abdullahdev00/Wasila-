@@ -380,14 +380,12 @@ export default function BookingsScreen() {
               </Typography>
             </View>
 
-            {user.role !== 'provider' && (
-              <TouchableOpacity style={styles.walletHeaderBtn} onPress={() => setWalletModalVisible(true)}>
-                <Ionicons name="wallet-outline" size={18} color={THEME.colors.primary} />
-                <Typography variant="body" weight="bold" style={styles.walletHeaderBalance}>
-                  Rs. {walletBalance.toLocaleString()}
-                </Typography>
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity style={styles.walletHeaderBtn} onPress={() => setWalletModalVisible(true)}>
+              <Ionicons name="wallet-outline" size={18} color={THEME.colors.primary} />
+              <Typography variant="body" weight="bold" style={styles.walletHeaderBalance}>
+                Rs. {walletBalance.toLocaleString()}
+              </Typography>
+            </TouchableOpacity>
           </View>
         </View>
 
