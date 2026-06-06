@@ -606,10 +606,17 @@ export default function ChatScreen() {
     if (currentSessionId && userChats.length > 0) {
       const activeChat = userChats.find(c => c.id === currentSessionId);
       if (activeChat && activeChat.messages) {
-        setMessages(activeChat.messages);
+        // Only update if we switched sessions, if Firestore has more messages, or if direct chat is active
+        const isDifferentSession = messages.length === 0 || messages[0]?.id === 'welcome' || 
+          (messages.length > 0 && activeChat.messages.length > 0 && activeChat.messages[0]?.text !== messages[0]?.text);
+        const hasNewMessages = activeChat.messages.length > messages.length;
+        
+        if (isDifferentSession || hasNewMessages || activeChat.directChatActive) {
+          setMessages(activeChat.messages);
+        }
       }
     }
-  }, [userChats, currentSessionId]);
+  }, [userChats, currentSessionId, messages]);
 
   const startNewSession = () => {
     const newId = `chat_${user?.uid || 'guest'}_${Date.now()}`;

@@ -737,19 +737,27 @@ app.post('/api/chat', async (req, res) => {
         }
       }
 
-      // Fallback to activeBookings[0] if no valid ID was found in the message
+      // Match provider name if mentioned in the message
       if (!booking) {
+        const lowerMessage = message.toLowerCase();
         const disputeCandidates = bookings.filter((b: any) => 
           ['pending', 'accepted', 'arrived', 'completed', 'rescheduled'].includes(b.status?.toLowerCase())
         );
-        if (disputeCandidates.length > 0) {
-          booking = disputeCandidates[0];
-          console.log(`[Dispute Chat Flow] Fallback to most recent active booking: ${booking.id}`);
+        for (const candidate of disputeCandidates) {
+          const pName = (candidate.providerName || '').toLowerCase();
+          if (pName && lowerMessage.includes(pName)) {
+            booking = candidate;
+            console.log(`[Dispute Chat Flow] Matched provider name "${candidate.providerName}" in message for booking ${booking.id}`);
+            break;
+          }
         }
       }
 
       if (!booking) {
-        finalReply = "Maazrat, Hamein aap ki koi active ya completed booking nahi mili jiske liye shikayat darj ki ja sakay.";
+        const isUrduScript = /[\u0600-\u06FF]/.test(message || '');
+        finalReply = isUrduScript
+          ? "براہِ مہربانی، جس بکنگ کی آپ شکایت درج کروانا چاہتے ہیں، اس کی Booking ID فراہم کریں تا کہ میں کارروائی کر سکوں۔ (Aap Bookings tab se ID copy kar sakte hain)۔"
+          : "Bara-e-meharbani, jis booking ki aap shikayat darj karwana chahte hain, uski Booking ID share karein taake main action le sakoon. (Aap Bookings tab se ID copy kar sakte hain).";
       } else {
         const bookingRef = doc(db, 'bookings', booking.id);
         const issueType = parsed.issueType || 'no_show';
