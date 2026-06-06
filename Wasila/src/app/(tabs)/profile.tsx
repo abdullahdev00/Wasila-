@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { BlurView } from 'expo-blur';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
@@ -43,6 +44,7 @@ const { width } = Dimensions.get('window');
 
 export default function ProfileScreen() {
   const { user, updateUser } = useAuthStore();
+  const router = useRouter();
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -244,6 +246,17 @@ export default function ProfileScreen() {
             <View style={styles.settingText}>
               <Typography variant="body" weight="bold">Edit Profile</Typography>
               <Typography variant="caption" color="muted">Name, Phone number</Typography>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#CBD5E1" />
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.settingRow} onPress={() => router.push('/complaints')}>
+            <View style={[styles.settingIcon, { backgroundColor: '#FEF2F2' }]}>
+              <Ionicons name="warning-outline" size={22} color="#EF4444" />
+            </View>
+            <View style={styles.settingText}>
+              <Typography variant="body" weight="bold">Shikayaat (Complaints)</Typography>
+              <Typography variant="caption" color="muted">Apni shikayaat aur unka status dekhye</Typography>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#CBD5E1" />
           </TouchableOpacity>

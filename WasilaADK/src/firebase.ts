@@ -145,11 +145,7 @@ export async function fetchUserBookings(userId: string): Promise<any[]> {
       if (data.userId === userId) {
         bookings.push({
           id: doc.id,
-          serviceName: data.serviceName || 'Unknown Service',
-          providerName: data.providerName || 'Professional',
-          status: data.status || 'pending',
-          date: data.date || 'Tomorrow, 10:00 AM',
-          price: data.price || 0
+          ...data
         });
       }
     });
@@ -257,7 +253,7 @@ export async function logTransaction(
   providerName: string,
   bookingId: string,
   amount: number,
-  type: 'payment_hold' | 'payment_release' | 'refund' | 'deposit',
+  type: 'payment_hold' | 'payment_release' | 'refund' | 'deposit' | 'penalty',
   description: string
 ): Promise<string> {
   try {
@@ -533,9 +529,10 @@ export async function createDispute(
   bookingId: string,
   issueType: 'overcharge' | 'no_show' | 'late_arrival' | 'poor_quality',
   details: string,
-  resolutionAction: 'refund_full' | 'refund_difference' | 'refund_compensation' | 'logged_complaint' | 'rejected',
+  resolutionAction: 'refund_full' | 'refund_difference' | 'refund_compensation' | 'logged_complaint' | 'rejected' | 'pending_provider_response',
   refundAmount: number,
-  verdictSummary: string
+  verdictSummary: string,
+  customStatus?: 'pending' | 'resolved' | 'rejected' | 'pending_provider_response'
 ): Promise<string> {
   const disputesCol = collection(db, 'disputes');
   
@@ -568,7 +565,7 @@ export async function createDispute(
     providerName,
     issueType,
     details,
-    status: 'resolved', // Auto-resolved by the AI Agent
+    status: customStatus || 'resolved',
     resolutionAction,
     refundAmount,
     verdictSummary,

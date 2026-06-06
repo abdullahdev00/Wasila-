@@ -10,7 +10,7 @@ import { SupplierAgent } from './agents/SupplierAgent';
 import { CustomerNegotiatorAgent } from './agents/CustomerNegotiatorAgent';
 import { DisputeAgent } from './agents/DisputeAgent';
 import { getUserName, fetchUserBookings, db, saveChatSession, fetchLastChatSession, createBooking, releaseBookingPayment, refundBookingPayment, logTransaction, createDispute } from './firebase';
-import { getDoc, doc, setDoc, updateDoc, collection, getDocs, addDoc } from 'firebase/firestore/lite';
+import { getDoc, doc, setDoc, updateDoc, collection, getDocs, addDoc, query, where } from 'firebase/firestore/lite';
 import { callOpenRouter } from './utils/openRouter';
 import { parseBookingDateToTimestamp } from './utils/dateParser';
 import { deepSanitize, sanitizeText } from './utils/privacyFilter';
@@ -258,9 +258,22 @@ app.post('/api/chat', async (req, res) => {
       userMemory.fullMessages = [];
     }
 
+    // Fetch user bookings to build active bookings context
+    const bookings = await fetchUserBookings(userId);
+    const activeBookings = bookings.filter((b: any) => 
+      ['pending', 'accepted', 'arrived', 'completed', 'rescheduled', 'disputed_no_show'].includes(b.status?.toLowerCase())
+    );
+
+    const bookingsSummary = activeBookings.map((b: any) => 
+      `Booking ID: ${b.id} | Provider Name: ${b.providerName || 'Professional'} | Status: ${b.status} | Scheduled Time: ${b.date || 'unknown'}`
+    ).join('\n');
+
     // Inject history context so agents remember the past
     const historyText = userMemory.history.map((h: any) => `User: "${h.user}" | AI: "${h.ai}"`).join('\n');
     const contextualMessage = deepSanitize(`
+      [Active Bookings Context]:
+      ${bookingsSummary || 'No active bookings'}
+
       [Recent Chat History]:
       ${historyText || 'No previous chat'}
       
@@ -703,6 +716,194 @@ app.post('/api/chat', async (req, res) => {
           };
           const response = await callConcierge(message, state);
           finalReply = response.reply;
+        }
+      }
+    } else if (parsed.action && parsed.action.toLowerCase() === 'dispute') {
+      console.log(`[Dispute Chat Flow] Resolving dispute query in chat: "${message}"`);
+      
+      let booking: any = null;
+      // Search for any word in message that looks like a booking ID (length 15 to 25 alphanumeric)
+      const words = message.split(/[\s,.;!?()]+/);
+      for (const word of words) {
+        if (word.length >= 15 && word.length <= 25 && /^[a-zA-Z0-9_-]+$/.test(word)) {
+          try {
+            const bSnap = await getDoc(doc(db, 'bookings', word));
+            if (bSnap.exists()) {
+              booking = { id: bSnap.id, ...bSnap.data() };
+              console.log(`[Dispute Chat Flow] Extracted booking ID from chat: ${booking.id}`);
+              break;
+            }
+          } catch (e) {}
+        }
+      }
+
+      // Fallback to activeBookings[0] if no valid ID was found in the message
+      if (!booking) {
+        const disputeCandidates = bookings.filter((b: any) => 
+          ['pending', 'accepted', 'arrived', 'completed', 'rescheduled'].includes(b.status?.toLowerCase())
+        );
+        if (disputeCandidates.length > 0) {
+          booking = disputeCandidates[0];
+          console.log(`[Dispute Chat Flow] Fallback to most recent active booking: ${booking.id}`);
+        }
+      }
+
+      if (!booking) {
+        finalReply = "Maazrat, Hamein aap ki koi active ya completed booking nahi mili jiske liye shikayat darj ki ja sakay.";
+      } else {
+        const bookingRef = doc(db, 'bookings', booking.id);
+        const issueType = parsed.issueType || 'no_show';
+        const serviceId = booking.serviceId;
+
+        if (issueType === 'no_show') {
+          const scheduledTimestamp = booking.scheduledTimestamp || 0;
+          if (scheduledTimestamp && Date.now() < scheduledTimestamp) {
+            console.log(`[Dispute Chat Flow] Rejecting premature no_show dispute in chat.`);
+            finalReply = `Maazrat, aap ki booking ka scheduled time abhi nahi aaya (Scheduled: ${booking.date || 'unknown'}). Bara-e-meharbani scheduled time guzarne ka intezar karein.`;
+          } else if (['pending', 'accepted', 'rescheduled'].includes(booking.status?.toLowerCase())) {
+            console.log(`[Dispute Chat Flow] Intercepting no_show. Triggering provider response check...`);
+
+            // A. Update booking status to disputed_no_show
+            await retryDb(() => updateDoc(bookingRef, {
+              status: 'disputed_no_show',
+              disputedAt: Date.now()
+            }));
+
+            // B. Create a pending dispute document in Firestore `/disputes`
+            await createDispute(
+              booking.id,
+              'no_show',
+              message,
+              'pending_provider_response',
+              0,
+              "Shikayat darj kar li gayi hai. Hum provider se confirm kar rahe hain ke wo aa rahe hain ya nahi.",
+              'pending_provider_response'
+            );
+
+            // C. Create a notification for the provider to alert them in their dashboard
+            const providerUserId = booking.providerId;
+            if (providerUserId) {
+              const notifCol = collection(db, 'notifications');
+              await retryDb(() => addDoc(notifCol, {
+                userId: providerUserId,
+                title: "No-Show Report",
+                message: `Customer ne report kiya hai ke aap abhi tak nahi pohanche. Kya aap ja rahe hain ya nahi?`,
+                type: 'no_show_alert',
+                bookingId: booking.id,
+                timestamp: new Date().toISOString(),
+                read: false
+              }));
+            }
+
+            finalReply = "Aap ki shikayat (No-Show) darj kar li gayi hai. Hum provider se confirm kar rahe hain ke wo aa rahe hain ya nahi. Jaise hi unka reply aaye ga, aap ko notify kar diya jaye ga.";
+          } else {
+            // Already completed or arrived, evaluate using DisputeAgent
+            await pushAndBroadcastTrace('DisputeAgent', 'running', 'Evaluating dispute evidence via AI...');
+            const decision = await disputeAgent.evaluateDispute('no_show', message, booking);
+            
+            if (decision.isValid) {
+              await retryDb(() => updateDoc(bookingRef, {
+                status: 'cancelled_by_dispute',
+                disputedAt: Date.now()
+              }));
+              await refundBookingPayment(booking.userId, booking.id, booking.price || 0, booking.serviceId, booking.providerName || 'Professional');
+              
+              // Penalize provider
+              const serviceRef = doc(db, 'services', booking.serviceId);
+              const serviceSnap = await retryDb(() => getDoc(serviceRef));
+              if (serviceSnap.exists()) {
+                const serviceData = serviceSnap.data();
+                const cancellations = (serviceData.cancellations || 0) + 1;
+                const penaltyDeduction = decision.providerPenalty || 15;
+                const newScore = Math.max(0, (serviceData.reliabilityScore !== undefined ? serviceData.reliabilityScore : 100) - penaltyDeduction);
+                await retryDb(() => updateDoc(serviceRef, { cancellations, reliabilityScore: newScore }));
+              }
+            }
+
+            await createDispute(booking.id, 'no_show', message, decision.action, decision.refundAmount, decision.verdictSummary);
+            await pushAndBroadcastTrace('DisputeAgent', 'done', 'Evaluating dispute evidence via AI...', decision.verdictSummary);
+            finalReply = decision.verdictSummary;
+          }
+        } else if (issueType === 'overcharge') {
+          // Trigger Overcharge evaluation using DisputeAgent
+          await pushAndBroadcastTrace('DisputeAgent', 'running', 'Evaluating overcharge dispute evidence via AI...');
+          const decision = await disputeAgent.evaluateDispute('overcharge', message, booking);
+
+          if (decision.isValid) {
+            if (decision.action === 'refund_difference') {
+              await retryDb(() => updateDoc(bookingRef, {
+                paymentStatus: 'refunded_partially',
+                disputedAt: Date.now()
+              }));
+
+              // Deduct from provider
+              const providerUserId = booking.providerId;
+              if (providerUserId && providerUserId !== 'guest') {
+                const providerUserRef = doc(db, 'users', providerUserId);
+                const providerUserSnap = await retryDb(() => getDoc(providerUserRef));
+                let providerWalletBalance = 0;
+                if (providerUserSnap.exists()) {
+                  providerWalletBalance = providerUserSnap.data().walletBalance !== undefined ? providerUserSnap.data().walletBalance : 0;
+                }
+                const newProviderWalletBalance = providerWalletBalance - decision.refundAmount;
+                await retryDb(() => setDoc(providerUserRef, { walletBalance: newProviderWalletBalance }, { merge: true }));
+                
+                await logTransaction(providerUserId, booking.providerName || 'Professional', 'customer', booking.userName || 'Customer', booking.id, decision.refundAmount, 'penalty', `Rs. ${decision.refundAmount} deducted due to overcharge dispute`);
+                
+                await addDoc(collection(db, 'notifications'), {
+                  userId: providerUserId,
+                  title: "Overcharge Penalty Alert",
+                  message: `Customer ke dispute ki wajah se aap ke wallet se Rs. ${decision.refundAmount} deduct kar liye gaye hain.`,
+                  type: 'dispute_penalty',
+                  bookingId: booking.id,
+                  timestamp: new Date().toISOString(),
+                  read: false
+                });
+              }
+
+              // Deduct service earnings
+              const serviceRef = doc(db, 'services', serviceId);
+              const serviceSnap = await retryDb(() => getDoc(serviceRef));
+              if (serviceSnap.exists()) {
+                const serviceData = serviceSnap.data();
+                const currentEarnings = serviceData.earnings || 0;
+                await retryDb(() => updateDoc(serviceRef, { earnings: Math.max(0, currentEarnings - decision.refundAmount) }));
+              }
+
+              // Refund customer
+              const customerUserRef = doc(db, 'users', booking.userId);
+              const customerUserSnap = await retryDb(() => getDoc(customerUserRef));
+              let customerWalletBalance = 0;
+              if (customerUserSnap.exists()) {
+                customerWalletBalance = customerUserSnap.data().walletBalance !== undefined ? customerUserSnap.data().walletBalance : 0;
+              }
+              const newCustomerWalletBalance = customerWalletBalance + decision.refundAmount;
+              await retryDb(() => setDoc(customerUserRef, { walletBalance: newCustomerWalletBalance }, { merge: true }));
+
+              await logTransaction(booking.userId, booking.userName || 'Customer', booking.serviceId, booking.providerName || 'Professional', booking.id, decision.refundAmount, 'refund', `Rs. ${decision.refundAmount} refunded due to overcharge dispute`);
+            } else if (decision.action === 'refund_full') {
+              // Cancel and refund full
+              await retryDb(() => updateDoc(bookingRef, { status: 'cancelled_by_dispute', disputedAt: Date.now() }));
+              await refundBookingPayment(booking.userId, booking.id, booking.price || 0, booking.serviceId, booking.providerName || 'Professional');
+              
+              // Penalize provider
+              const serviceRef = doc(db, 'services', booking.serviceId);
+              const serviceSnap = await retryDb(() => getDoc(serviceRef));
+              if (serviceSnap.exists()) {
+                const serviceData = serviceSnap.data();
+                const cancellations = (serviceData.cancellations || 0) + 1;
+                const penaltyDeduction = decision.providerPenalty || 15;
+                const newScore = Math.max(0, (serviceData.reliabilityScore !== undefined ? serviceData.reliabilityScore : 100) - penaltyDeduction);
+                await retryDb(() => updateDoc(serviceRef, { cancellations, reliabilityScore: newScore }));
+              }
+            }
+          }
+
+          await createDispute(booking.id, 'overcharge', message, decision.action, decision.refundAmount, decision.verdictSummary);
+          await pushAndBroadcastTrace('DisputeAgent', 'done', 'Evaluating overcharge dispute evidence via AI...', decision.verdictSummary);
+          finalReply = decision.verdictSummary;
+        } else {
+          finalReply = "Maazrat, main abhi is tarah ki shikayat ko process nahi kar sakta.";
         }
       }
     } else if (parsed.action && parsed.action.toLowerCase() === 'cancel') {
@@ -1715,6 +1916,223 @@ app.post('/api/users/:id/deposit', async (req, res) => {
   }
 });
 
+app.post('/api/bookings/:bookingId/dispute-response', async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const { response } = req.body; // 'coming' | 'no_go'
+
+    console.log(`\n[Dispute Response Endpoint] Booking: ${bookingId} | Response: ${response}`);
+
+    const bookingRef = doc(db, 'bookings', bookingId);
+    const bookingSnap = await retryDb(() => getDoc(bookingRef));
+
+    if (!bookingSnap.exists()) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+
+    const bookingData = bookingSnap.data();
+    const serviceId = bookingData.serviceId;
+    const userId = bookingData.userId;
+    const providerId = bookingData.providerId;
+
+    const disputesCol = collection(db, 'disputes');
+    const disputesSnap = await retryDb(() => getDocs(query(disputesCol, where('bookingId', '==', bookingId))));
+    let disputeDocRef = null;
+    if (!disputesSnap.empty) {
+      const firstDispute = disputesSnap.docs[0];
+      disputeDocRef = doc(db, 'disputes', firstDispute.id);
+    }
+
+    if (response === 'coming') {
+      // 1. Restore booking status to 'accepted'
+      await retryDb(() => updateDoc(bookingRef, {
+        status: 'accepted',
+        disputeResponse: 'coming',
+        timestamp: new Date().toISOString()
+      }));
+
+      // 2. Create notification for customer
+      const notifCol = collection(db, 'notifications');
+      await retryDb(() => addDoc(notifCol, {
+        userId: userId,
+        title: "Provider Coming",
+        message: `${bookingData.providerName || 'Provider'} ne confirm kiya hai ke wo aa rahe hain aur late hone par mazrat ki hai. Aap un ka wait kar sakte hain.`,
+        type: 'provider_coming',
+        bookingId: bookingId,
+        timestamp: new Date().toISOString(),
+        read: false
+      }));
+
+      // 3. Update dispute document to resolved/closed with coming status
+      if (disputeDocRef) {
+        await retryDb(() => updateDoc(disputeDocRef, {
+          status: 'resolved',
+          resolutionAction: 'provider_coming',
+          verdictSummary: "Provider ne confirm kiya hai ke wo aa rahe hain aur late hone par mazrat ki hai."
+        }));
+      }
+
+      return res.json({
+        success: true,
+        message: "Status updated back to accepted. Customer has been notified."
+      });
+
+    } else if (response === 'no_go') {
+      // 1. Update booking status to 'cancelled_by_dispute'
+      await retryDb(() => updateDoc(bookingRef, {
+        status: 'cancelled_by_dispute',
+        disputeResponse: 'no_go',
+        disputedAt: Date.now()
+      }));
+
+      // 2. Escrow refund back to the customer's wallet
+      try {
+        await refundBookingPayment(
+          userId,
+          bookingId,
+          bookingData.price || 0,
+          serviceId || '',
+          bookingData.providerName || 'Professional'
+        );
+      } catch (escrowErr: any) {
+        console.warn(`[Dispute Response] Refund failed for booking ${bookingId}:`, escrowErr.message);
+      }
+
+      // 3. Penalize provider reliability score (-15%)
+      if (serviceId) {
+        const serviceRef = doc(db, 'services', serviceId);
+        const serviceSnap = await retryDb(() => getDoc(serviceRef));
+
+        if (serviceSnap.exists()) {
+          const serviceData = serviceSnap.data();
+          const cancellations = (serviceData.cancellations || 0) + 1;
+          const newScore = Math.max(0, (serviceData.reliabilityScore !== undefined ? serviceData.reliabilityScore : 100) - 15);
+
+          await retryDb(() => updateDoc(serviceRef, {
+            cancellations: cancellations,
+            reliabilityScore: newScore
+          }));
+        }
+      }
+
+      // 4. Update dispute document
+      if (disputeDocRef) {
+        await retryDb(() => updateDoc(disputeDocRef, {
+          status: 'resolved',
+          resolutionAction: 'refund_full',
+          verdictSummary: "Provider ne aane se inkar kar diya. Booking cancel kar di gai hai aur full payment customer ke wallet mein refund kar di gai hai."
+        }));
+      }
+
+      // 5. Trigger Recovery Agent Workflow with Apology
+      let apologyMessage = `Hum bohot mazrat chahte hain ke ${bookingData.providerName || 'Provider'} nahi aa sake. `;
+      let backupSuccess = false;
+      let backupProviderName = '';
+      let backupPrice = 0;
+
+      try {
+        const matchResult = await matchmaker.findMatch(
+          `plumber AC Electrician repair`,
+          bookingData.category || 'General',
+          bookingData.location || 'Islamabad',
+          serviceId || undefined
+        );
+
+        if (matchResult?.bestMatch) {
+          const backupMatch = matchResult.bestMatch;
+          backupProviderName = backupMatch.name || backupMatch.providerName || 'Professional';
+          
+          const basePrice = backupMatch.pricePerHour || 1000;
+          const quote = await pricingAgent.calculateQuote(basePrice, "booking", backupMatch.location || "Islamabad");
+          backupPrice = quote.total;
+
+          const userRef = doc(db, 'users', userId);
+          const userSnap = await getDoc(userRef);
+          if (userSnap.exists()) {
+            const userData = userSnap.data();
+            const walletBalance = userData.walletBalance || 0;
+            const holdingBalance = userData.holdingBalance || 0;
+
+            if (walletBalance >= backupPrice) {
+              const newBookingId = await createBooking(userId, backupMatch.id, {
+                price: backupPrice,
+                date: bookingData.date || 'Today',
+                notes: 'Auto-booked backup service after provider cancellation'
+              });
+
+              await logTransaction(
+                userId,
+                userData.name || 'Customer',
+                backupMatch.id,
+                backupProviderName,
+                newBookingId,
+                backupPrice,
+                'payment_hold',
+                `Rs. ${backupPrice} held in Escrow for backup booking with ${backupProviderName}`
+              );
+
+              await updateDoc(userRef, {
+                walletBalance: walletBalance - backupPrice,
+                holdingBalance: holdingBalance + backupPrice
+              });
+
+              backupSuccess = true;
+              apologyMessage += `Lekin pareshan na hon, humne aapke liye ek naye provider, ${backupProviderName}, ke saath backup booking bana di hai. Unka rate Rs. ${backupPrice} hai aur booking confirm ho chuki hai.`;
+            } else {
+              apologyMessage += `Humne backup provider ki koshish ki lekin aapke wallet mein balance kam tha (Required: Rs. ${backupPrice}). Bara-e-meharbani wallet reload kar ke dobara book karein.`;
+            }
+          }
+        } else {
+          apologyMessage += `Humne backup provider search kiya lekin us waqt koi aur provider available nahi tha. Aap hamari service list se dobara search kar sakte hain.`;
+        }
+      } catch (recoveryErr: any) {
+        console.error("[Recovery Engine Error]:", recoveryErr.message);
+        apologyMessage += `Hum backup provider connect nahi kar sake. Bara-e-meharbani hamari main screen se naya provider search karein.`;
+      }
+
+      // 6. Update user's chat session doc history
+      try {
+        const lastSession = await fetchLastChatSession(userId);
+        if (lastSession) {
+          const chatDocRef = doc(db, 'chats', lastSession.id);
+          const currentMessages = lastSession.messages || [];
+          currentMessages.push({
+            sender: 'ai',
+            text: apologyMessage,
+            timestamp: new Date().toISOString()
+          });
+          await updateDoc(chatDocRef, {
+            messages: currentMessages,
+            updatedAt: new Date().toISOString()
+          });
+        }
+      } catch (chatErr: any) {
+        console.error("[Dispute Response] Failed to write apology to chat session:", chatErr.message);
+      }
+
+      // 7. Write push notification
+      const notifCol = collection(db, 'notifications');
+      await retryDb(() => addDoc(notifCol, {
+        userId: userId,
+        title: "Booking Cancelled",
+        message: apologyMessage,
+        type: 'recovery',
+        timestamp: new Date().toISOString(),
+        read: false
+      }));
+
+      return res.json({
+        success: true,
+        message: "Booking cancelled, customer refunded, reliability penalized, and recovery process completed."
+      });
+    }
+
+  } catch (error: any) {
+    console.error("[Dispute Response Route Error]:", error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/api/disputes', async (req, res) => {
   try {
     const { bookingId, issueType, details } = req.body;
@@ -1734,10 +2152,72 @@ app.post('/api/disputes', async (req, res) => {
     }
 
     const bookingData = bookingSnap.data();
+
+    // Check for premature no-show complaints
+    if (issueType === 'no_show') {
+      const scheduledTimestamp = bookingData.scheduledTimestamp || 0;
+      if (scheduledTimestamp && Date.now() < scheduledTimestamp) {
+        console.log(`[Dispute Endpoint] Premature no_show dispute rejected. Scheduled time: ${bookingData.date}`);
+        return res.json({
+          success: true,
+          isValid: false,
+          verdict: `Maazrat, aap ki booking ka scheduled time abhi nahi aaya (Scheduled: ${bookingData.date || 'unknown'}). Bara-e-meharbani scheduled time guzarne ka intezar karein.`,
+          refundAmount: 0,
+          action: "rejected"
+        });
+      }
+    }
+
     const serviceId = bookingData.serviceId;
 
     if (!serviceId) {
       return res.status(400).json({ error: "Booking does not have a valid serviceId" });
+    }
+
+    // Intercept check for interactive No-Show flow
+    if (issueType === 'no_show' && ['pending', 'accepted', 'rescheduled'].includes(bookingData.status?.toLowerCase())) {
+      console.log(`[Dispute Endpoint] Intercepting no_show dispute. Booking status is '${bookingData.status}'. Triggering provider response check flow...`);
+
+      // A. Update booking status to disputed_no_show
+      await retryDb(() => updateDoc(bookingRef, {
+        status: 'disputed_no_show',
+        disputedAt: Date.now()
+      }));
+
+      // B. Create a pending dispute document in Firestore `/disputes`
+      await createDispute(
+        bookingId,
+        issueType,
+        details,
+        'pending_provider_response',
+        0,
+        "Shikayat darj kar li gayi hai. Hum provider se confirm kar rahe hain ke wo aa rahe hain ya nahi.",
+        'pending_provider_response'
+      );
+
+      // C. Create a notification for the provider to alert them in their dashboard
+      const providerUserId = bookingData.providerId;
+      if (providerUserId) {
+        const notifCol = collection(db, 'notifications');
+        await retryDb(() => addDoc(notifCol, {
+          userId: providerUserId,
+          title: "No-Show Report",
+          message: `Customer ne report kiya hai ke aap abhi tak nahi pohanche. Kya aap ja rahe hain ya nahi?`,
+          type: 'no_show_alert',
+          bookingId: bookingId,
+          timestamp: new Date().toISOString(),
+          read: false
+        }));
+      }
+
+      return res.json({
+        success: true,
+        isValid: true,
+        pendingProviderResponse: true,
+        verdict: "Shikayat darj kar li gayi hai. Hum provider se confirm kar rahe hain ke wo aa rahe hain ya nahi. Aap ko jald hi notification mil jae ga.",
+        refundAmount: 0,
+        action: "pending_provider_response"
+      });
     }
 
     // 2. Run DisputeAgent to evaluate the claim
@@ -1788,6 +2268,98 @@ app.post('/api/disputes', async (req, res) => {
             reliabilityScore: newScore
           }));
           console.log(`[Dispute Penalty] Deducted ${penaltyDeduction}% from provider reliability. New Score: ${newScore}%`);
+        }
+      } else if (decision.action === 'refund_difference') {
+        // A. Update booking payment status
+        await retryDb(() => updateDoc(bookingRef, {
+          paymentStatus: 'refunded_partially',
+          disputedAt: Date.now()
+        }));
+
+        // B. Deduct overcharge from provider wallet
+        const providerUserId = bookingData.providerId;
+        if (providerUserId && providerUserId !== 'guest') {
+          const providerUserRef = doc(db, 'users', providerUserId);
+          const providerUserSnap = await retryDb(() => getDoc(providerUserRef));
+          let providerWalletBalance = 0;
+          if (providerUserSnap.exists()) {
+            providerWalletBalance = providerUserSnap.data().walletBalance !== undefined ? providerUserSnap.data().walletBalance : 0;
+          }
+          const newProviderWalletBalance = providerWalletBalance - decision.refundAmount;
+          await retryDb(() => setDoc(providerUserRef, {
+            walletBalance: newProviderWalletBalance
+          }, { merge: true }));
+
+          // Log provider transaction (penalty)
+          try {
+            await logTransaction(
+              providerUserId,
+              bookingData.providerName || 'Professional',
+              'customer',
+              bookingData.userName || 'Customer',
+              bookingId,
+              decision.refundAmount,
+              'penalty',
+              `Rs. ${decision.refundAmount.toLocaleString()} deducted due to overcharge dispute resolution for booking with client ${bookingData.userName || 'Customer'}`
+            );
+          } catch (logErr: any) {
+            console.warn(`[Dispute Route] Provider transaction log failed:`, logErr.message);
+          }
+
+          // Create notification warning for provider
+          try {
+            const notifCol = collection(db, 'notifications');
+            await retryDb(() => addDoc(notifCol, {
+              userId: providerUserId,
+              title: "Overcharge Penalty Alert",
+              message: `Customer ke dispute ki wajah se aap ke wallet se Rs. ${decision.refundAmount} deduct kar liye gaye hain. Bara-e-meharbani agreed price par hi kaam kiya karein.`,
+              type: 'dispute_penalty',
+              bookingId: bookingId,
+              timestamp: new Date().toISOString(),
+              read: false
+            }));
+          } catch (notifErr: any) {
+            console.warn(`[Dispute Route] Provider notification failed:`, notifErr.message);
+          }
+        }
+
+        // C. Deduct earnings from services collection
+        const serviceRef = doc(db, 'services', serviceId);
+        const serviceSnap = await retryDb(() => getDoc(serviceRef));
+        if (serviceSnap.exists()) {
+          const serviceData = serviceSnap.data();
+          const currentEarnings = serviceData.earnings || 0;
+          await retryDb(() => updateDoc(serviceRef, {
+            earnings: Math.max(0, currentEarnings - decision.refundAmount)
+          }));
+        }
+
+        // D. Refund difference to customer wallet
+        const customerUserRef = doc(db, 'users', bookingData.userId);
+        const customerUserSnap = await retryDb(() => getDoc(customerUserRef));
+        let customerWalletBalance = 0;
+        if (customerUserSnap.exists()) {
+          customerWalletBalance = customerUserSnap.data().walletBalance !== undefined ? customerUserSnap.data().walletBalance : 0;
+        }
+        const newCustomerWalletBalance = customerWalletBalance + decision.refundAmount;
+        await retryDb(() => setDoc(customerUserRef, {
+          walletBalance: newCustomerWalletBalance
+        }, { merge: true }));
+
+        // Log customer transaction (refund)
+        try {
+          await logTransaction(
+            bookingData.userId,
+            bookingData.userName || 'Customer',
+            serviceId,
+            bookingData.providerName || 'Professional',
+            bookingId,
+            decision.refundAmount,
+            'refund',
+            `Rs. ${decision.refundAmount.toLocaleString()} refunded due to overcharge dispute resolution for booking with ${bookingData.providerName || 'Professional'}`
+          );
+        } catch (logErr: any) {
+          console.warn(`[Dispute Route] Customer transaction log failed:`, logErr.message);
         }
       }
 

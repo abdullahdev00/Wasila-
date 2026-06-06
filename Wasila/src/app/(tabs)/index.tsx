@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, ScrollView, StyleSheet, TouchableOpacity, Dimensions, ActivityIndicator, TextInput, Alert } from 'react-native';
+import { View, ScrollView, StyleSheet, TouchableOpacity, Dimensions, ActivityIndicator, TextInput, Alert, Modal } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -95,6 +95,37 @@ export default function HomeScreen() {
   const [decliningBookingId, setDecliningBookingId] = React.useState<string | null>(null);
   const [arrivingBookingId, setArrivingBookingId] = React.useState<string | null>(null);
   const [completingBookingId, setCompletingBookingId] = React.useState<string | null>(null);
+
+  // Dispute Response Loading States
+  const [disputeResponseLoading, setDisputeResponseLoading] = React.useState<'coming' | 'no_go' | null>(null);
+
+  const handleDisputeResponse = async (bookingId: string, response: 'coming' | 'no_go') => {
+    setDisputeResponseLoading(response);
+    try {
+      const res = await fetch(`${API_BASE_URL}/bookings/${bookingId}/dispute-response`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ response })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        Alert.alert(
+          "Response Submitted",
+          response === 'coming'
+            ? "Aapki response bhej di gayi hai. Customer ko notification chala gaya hai."
+            : "Booking cancel kar di gayi hai aur details update ho gayi hain."
+        );
+      } else {
+        throw new Error(data.error || "Failed to submit response");
+      }
+    } catch (err: any) {
+      console.error("[Dispute Response Error]:", err);
+      Alert.alert("Error", err.message || "Response submit karne mein ghalti hui.");
+    } finally {
+      setDisputeResponseLoading(null);
+    }
+  };
 
   React.useEffect(() => {
     if (role !== 'provider' || !user) {
@@ -765,6 +796,90 @@ export default function HomeScreen() {
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {role === 'provider' ? renderProviderDashboard() : renderCustomerDashboard()}
       </ScrollView>
+
+      {/* Dispute Alert Modal for Provider */}
+      <Modal
+        visible={role === 'provider' && !!providerBookings.find(b => b.status === 'disputed_no_show')}
+        transparent
+        animationType="fade"
+      >
+        <View style={styles.modalOverlay}>
+          <Card customStyle={styles.modalCard}>
+            <View style={{ alignItems: 'center', marginBottom: 16 }}>
+              <View style={{ 
+                width: 56, 
+                height: 56, 
+                borderRadius: 28, 
+                backgroundColor: '#EF444415',
+                justifyContent: 'center',
+                alignItems: 'center',
+                marginBottom: 12
+              }}>
+                <Ionicons name="warning-outline" size={32} color="#EF4444" />
+              </View>
+              <Typography variant="h2" weight="bold">No-Show Alert!</Typography>
+            </View>
+
+            <Typography variant="body" style={{ textAlign: 'center', marginBottom: 8, lineHeight: 22 }}>
+              Customer ne report kiya hai ke aap scheduled time par abhi tak kaam par nahi pohanche.
+            </Typography>
+            <Typography variant="body" color="muted" style={{ textAlign: 'center', marginBottom: 24, fontSize: 13 }}>
+              Service: {providerBookings.find(b => b.status === 'disputed_no_show')?.serviceName} {"\n"}
+              Customer: {providerBookings.find(b => b.status === 'disputed_no_show')?.userName}
+            </Typography>
+
+            <View style={{ gap: 12 }}>
+              <TouchableOpacity 
+                style={[
+                  styles.disputeResponseBtn, 
+                  styles.comingBtn,
+                  disputeResponseLoading === 'coming' && { opacity: 0.7 }
+                ]} 
+                onPress={() => {
+                  const b = providerBookings.find(x => x.status === 'disputed_no_show');
+                  if (b) handleDisputeResponse(b.id, 'coming');
+                }}
+                disabled={!!disputeResponseLoading}
+              >
+                {disputeResponseLoading === 'coming' ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <>
+                    <Ionicons name="checkmark-circle-outline" size={20} color="#FFF" />
+                    <Typography variant="body" color="inverse" weight="bold" style={{ marginLeft: 8 }}>
+                      Haan, Main Aa Raha Hoon
+                    </Typography>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={[
+                  styles.disputeResponseBtn, 
+                  styles.noGoBtn,
+                  disputeResponseLoading === 'no_go' && { opacity: 0.7 }
+                ]} 
+                onPress={() => {
+                  const b = providerBookings.find(x => x.status === 'disputed_no_show');
+                  if (b) handleDisputeResponse(b.id, 'no_go');
+                }}
+                disabled={!!disputeResponseLoading}
+              >
+                {disputeResponseLoading === 'no_go' ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <>
+                    <Ionicons name="close-circle-outline" size={20} color="#FFF" />
+                    <Typography variant="body" color="inverse" weight="bold" style={{ marginLeft: 8 }}>
+                      Nahi Jana / Cancel Job
+                    </Typography>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </Card>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1117,5 +1232,33 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     minWidth: 80,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    width: '100%',
+    padding: 24,
+    borderRadius: 28,
+    backgroundColor: '#FFFFFF',
+    ...THEME.shadows.lg,
+  },
+  disputeResponseBtn: {
+    flexDirection: 'row',
+    height: 52,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...THEME.shadows.md,
+  },
+  comingBtn: {
+    backgroundColor: '#10B981',
+  },
+  noGoBtn: {
+    backgroundColor: '#EF4444',
   },
 });

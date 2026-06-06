@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, ScrollView, StyleSheet, TouchableOpacity, Image, ActivityIndicator, Alert, Modal, TextInput } from 'react-native';
+import { View, ScrollView, StyleSheet, TouchableOpacity, Image, ActivityIndicator, Alert, Modal, TextInput, Clipboard } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '../../components/ui/Typography';
 import { Card } from '../../components/ui/Card';
@@ -378,6 +378,19 @@ export default function BookingsScreen() {
 
   const handleDisputeSubmit = async () => {
     if (!selectedBookingToDispute) return;
+    
+    // Client-side early guard check for No-Show
+    if (disputeIssueType === 'no_show') {
+      const scheduledTime = selectedBookingToDispute.scheduledTimestamp || 0;
+      if (scheduledTime && Date.now() < scheduledTime) {
+        Alert.alert(
+          "Notice / Ghalti", 
+          `Maazrat, aap ki booking ka scheduled time abhi nahi aaya (Scheduled: ${selectedBookingToDispute.date || 'unknown'}). Bara-e-meharbani scheduled time guzarne ka intezar karein.`
+        );
+        return;
+      }
+    }
+
     if (!disputeDetails.trim()) {
       Alert.alert("Ghalti", "Bara-e-meharbani shikayat ki tafseel likhein.");
       return;
@@ -397,10 +410,14 @@ export default function BookingsScreen() {
 
       const data = await response.json();
       if (response.ok && data.success) {
-        setDisputeVerdict(data.verdict);
-        setDisputeRefundAmount(data.refundAmount || 0);
-        setDisputeModalVisible(false);
-        setVerdictModalVisible(true);
+        if (data.isValid === false) {
+          Alert.alert("Notice / Ghalti", data.verdict);
+        } else {
+          setDisputeVerdict(data.verdict);
+          setDisputeRefundAmount(data.refundAmount || 0);
+          setDisputeModalVisible(false);
+          setVerdictModalVisible(true);
+        }
       } else {
         throw new Error(data.error || "Dispute processing failed");
       }
@@ -475,6 +492,18 @@ export default function BookingsScreen() {
                     <View style={{ flex: 1, marginLeft: 16 }}>
                       <Typography variant="body" weight="bold">{booking.serviceName || 'Service'}</Typography>
                       <Typography variant="caption" color="muted">{booking.date}</Typography>
+                      <TouchableOpacity 
+                        style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}
+                        onPress={() => {
+                          Clipboard.setString(booking.id);
+                          Alert.alert("Copied", "Booking ID clipboard par copy ho gayi hai!");
+                        }}
+                      >
+                        <Typography variant="caption" color="muted" style={{ fontSize: 10, color: '#4F46E5' }}>
+                          ID: {booking.id}
+                        </Typography>
+                        <Ionicons name="copy-outline" size={10} color="#4F46E5" style={{ marginLeft: 4 }} />
+                      </TouchableOpacity>
                     </View>
                     <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
                       <Typography 
@@ -541,7 +570,7 @@ export default function BookingsScreen() {
 
                   {/* Dispute/Shikayat button for customer on active/completed bookings */}
                   {user.role !== 'provider' && 
-                   ['accepted', 'arrived', 'completed'].includes(booking.status?.toLowerCase()) && (
+                   ['pending', 'accepted', 'arrived', 'completed', 'rescheduled'].includes(booking.status?.toLowerCase()) && (
                     <View style={styles.disputeRow}>
                       <TouchableOpacity 
                         style={styles.disputeBtn} 
@@ -698,20 +727,21 @@ export default function BookingsScreen() {
                 </Typography>
               </TouchableOpacity>
 
-              {/* Option 2: Overcharge (Coming Soon) */}
+              {/* Option 2: Overcharge (Active) */}
               <TouchableOpacity 
                 style={[
                   styles.issueOption, 
-                  styles.issueOptionDisabled,
                   disputeIssueType === 'overcharge' && styles.issueOptionSelected
                 ]}
-                onPress={() => {
-                  Alert.alert("Notice", "Ziada paise lene ki shikayat aglay chunk me active hogi. Abhi testing ke liye sirf 'Provider nahi aya' select karein.");
-                }}
+                onPress={() => setDisputeIssueType('overcharge')}
               >
-                <Ionicons name="cash-outline" size={20} color="#94A3B8" />
-                <Typography variant="body" style={{ marginLeft: 8, color: '#94A3B8' }}>
-                  Ziada paise liye (Overcharge) - Jald Asy
+                <Ionicons name="cash-outline" size={20} color={disputeIssueType === 'overcharge' ? '#FFF' : '#EF4444'} />
+                <Typography 
+                  variant="body" 
+                  weight="medium" 
+                  style={{ marginLeft: 8, color: disputeIssueType === 'overcharge' ? '#FFF' : '#1E293B' }}
+                >
+                  Ziada paise liye (Overcharge)
                 </Typography>
               </TouchableOpacity>
 
