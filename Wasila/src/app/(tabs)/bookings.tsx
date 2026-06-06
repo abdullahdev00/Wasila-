@@ -57,6 +57,11 @@ export default function BookingsScreen() {
   const [walletModalVisible, setWalletModalVisible] = React.useState(false);
   const [depositing, setDepositing] = React.useState(false);
 
+  // Loading states for actions
+  const [cancellingBookingId, setCancellingBookingId] = React.useState<string | null>(null);
+  const [rescheduling, setRescheduling] = React.useState(false);
+  const [ratingSubmitting, setRatingSubmitting] = React.useState(false);
+
   React.useEffect(() => {
     if (!user) {
       console.log("[Bookings Debug] No user is logged in.");
@@ -193,6 +198,7 @@ export default function BookingsScreen() {
 
   const handleRatingSubmit = async () => {
     if (!selectedBookingToRate) return;
+    setRatingSubmitting(true);
     try {
       const bookingId = selectedBookingToRate.id;
       const serviceId = selectedBookingToRate.serviceId;
@@ -230,6 +236,8 @@ export default function BookingsScreen() {
     } catch (error: any) {
       console.error("Error submitting rating:", error);
       Alert.alert("Error", error.message);
+    } finally {
+      setRatingSubmitting(false);
     }
   };
 
@@ -251,6 +259,7 @@ export default function BookingsScreen() {
           text: "Yes, Cancel", 
           style: "destructive",
           onPress: async () => {
+            setCancellingBookingId(booking.id);
             try {
               if (!user) return;
               if (user.role === 'provider' && (booking.status === 'accepted' || booking.status === 'pending')) {
@@ -307,6 +316,8 @@ export default function BookingsScreen() {
             } catch (error: any) {
               console.error("Error cancelling booking:", error);
               Alert.alert("Error", error.message);
+            } finally {
+              setCancellingBookingId(null);
             }
           }
         }
@@ -327,6 +338,7 @@ export default function BookingsScreen() {
     }
     if (!rescheduleBookingId) return;
 
+    setRescheduling(true);
     try {
       await updateDoc(doc(db, 'bookings', rescheduleBookingId), {
         date: newDate,
@@ -340,6 +352,8 @@ export default function BookingsScreen() {
     } catch (error: any) {
       console.error("Error rescheduling booking:", error);
       Alert.alert("Error", error.message);
+    } finally {
+      setRescheduling(false);
     }
   };
 
@@ -449,11 +463,23 @@ export default function BookingsScreen() {
                    booking.status !== 'declined' && 
                    !booking.status?.toLowerCase().includes('cancel') && (
                     <View style={styles.actionRow}>
-                      <TouchableOpacity style={styles.rescheduleBtn} onPress={() => handleOpenReschedule(booking)}>
+                      <TouchableOpacity 
+                        style={[styles.rescheduleBtn, rescheduleBookingId === booking.id && { opacity: 0.7 }]} 
+                        onPress={() => handleOpenReschedule(booking)}
+                        disabled={rescheduleBookingId === booking.id || cancellingBookingId === booking.id}
+                      >
                         <Typography variant="caption" weight="bold">Reschedule</Typography>
                       </TouchableOpacity>
-                      <TouchableOpacity style={styles.cancelBtn} onPress={() => handleCancelBooking(booking)}>
-                        <Typography variant="caption" weight="bold" color="inverse">Cancel</Typography>
+                      <TouchableOpacity 
+                        style={[styles.cancelBtn, cancellingBookingId === booking.id && { opacity: 0.7 }]} 
+                        onPress={() => handleCancelBooking(booking)}
+                        disabled={rescheduleBookingId === booking.id || cancellingBookingId === booking.id}
+                      >
+                        {cancellingBookingId === booking.id ? (
+                          <ActivityIndicator size="small" color="#FFF" />
+                        ) : (
+                          <Typography variant="caption" weight="bold" color="inverse">Cancel</Typography>
+                        )}
                       </TouchableOpacity>
                     </View>
                   )}
@@ -501,10 +527,15 @@ export default function BookingsScreen() {
                 <Typography variant="body" weight="bold">Cancel</Typography>
               </TouchableOpacity>
               <TouchableOpacity 
-                style={[styles.modalBtn, styles.modalSubmitBtn]} 
+                style={[styles.modalBtn, styles.modalSubmitBtn, rescheduling && { opacity: 0.7 }]} 
                 onPress={handleRescheduleSubmit}
+                disabled={rescheduling}
               >
-                <Typography variant="body" color="inverse" weight="bold">Save</Typography>
+                {rescheduling ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <Typography variant="body" color="inverse" weight="bold">Save</Typography>
+                )}
               </TouchableOpacity>
             </View>
           </Card>
@@ -545,10 +576,15 @@ export default function BookingsScreen() {
                 <Typography variant="body" weight="bold">Later</Typography>
               </TouchableOpacity>
               <TouchableOpacity 
-                style={[styles.modalBtn, styles.modalSubmitBtn]} 
+                style={[styles.modalBtn, styles.modalSubmitBtn, ratingSubmitting && { opacity: 0.7 }]} 
                 onPress={handleRatingSubmit}
+                disabled={ratingSubmitting}
               >
-                <Typography variant="body" color="inverse" weight="bold">Submit</Typography>
+                {ratingSubmitting ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <Typography variant="body" color="inverse" weight="bold">Submit</Typography>
+                )}
               </TouchableOpacity>
             </View>
           </Card>
@@ -603,27 +639,39 @@ export default function BookingsScreen() {
               <Typography variant="body" weight="bold" style={{ marginBottom: 10 }}>
                 Demo Deposit Simulator
               </Typography>
-              <View style={styles.depositBtnRow}>
+              <View style={{ flexDirection: 'row', gap: 12 }}>
                 <TouchableOpacity 
-                  style={styles.depositBtn} 
+                  style={[styles.depositBtn, depositing && { opacity: 0.7 }]} 
                   onPress={() => handleDepositSimulation(2000)}
                   disabled={depositing}
                 >
-                  <Ionicons name="add-circle-outline" size={16} color={THEME.colors.primary} />
-                  <Typography variant="caption" weight="bold" style={{ marginLeft: 6, color: THEME.colors.primary }}>
-                    + Rs. 2,000
-                  </Typography>
+                  {depositing ? (
+                    <ActivityIndicator size="small" color={THEME.colors.primary} />
+                  ) : (
+                    <>
+                      <Ionicons name="add-circle-outline" size={16} color={THEME.colors.primary} />
+                      <Typography variant="caption" weight="bold" style={{ marginLeft: 6, color: THEME.colors.primary }}>
+                        + Rs. 2,000
+                      </Typography>
+                    </>
+                  )}
                 </TouchableOpacity>
                 
                 <TouchableOpacity 
-                  style={styles.depositBtn} 
+                  style={[styles.depositBtn, depositing && { opacity: 0.7 }]} 
                   onPress={() => handleDepositSimulation(5000)}
                   disabled={depositing}
                 >
-                  <Ionicons name="add-circle-outline" size={16} color={THEME.colors.primary} />
-                  <Typography variant="caption" weight="bold" style={{ marginLeft: 6, color: THEME.colors.primary }}>
-                    + Rs. 5,000
-                  </Typography>
+                  {depositing ? (
+                    <ActivityIndicator size="small" color={THEME.colors.primary} />
+                  ) : (
+                    <>
+                      <Ionicons name="add-circle-outline" size={16} color={THEME.colors.primary} />
+                      <Typography variant="caption" weight="bold" style={{ marginLeft: 6, color: THEME.colors.primary }}>
+                        + Rs. 5,000
+                      </Typography>
+                    </>
+                  )}
                 </TouchableOpacity>
               </View>
             </View>

@@ -90,6 +90,12 @@ export default function HomeScreen() {
     completedJobsCount: 0
   });
 
+  // Action Loading States
+  const [acceptingBookingId, setAcceptingBookingId] = React.useState<string | null>(null);
+  const [decliningBookingId, setDecliningBookingId] = React.useState<string | null>(null);
+  const [arrivingBookingId, setArrivingBookingId] = React.useState<string | null>(null);
+  const [completingBookingId, setCompletingBookingId] = React.useState<string | null>(null);
+
   React.useEffect(() => {
     if (role !== 'provider' || !user) {
       setLoadingProviderBookings(false);
@@ -161,6 +167,7 @@ export default function HomeScreen() {
   }, [role, user]);
 
   const handleAcceptBooking = async (bookingId: string) => {
+    setAcceptingBookingId(bookingId);
     try {
       await updateDoc(doc(db, 'bookings', bookingId), {
         status: 'accepted',
@@ -170,6 +177,8 @@ export default function HomeScreen() {
     } catch (error: any) {
       console.error("Error accepting booking:", error);
       Alert.alert("Error", error.message);
+    } finally {
+      setAcceptingBookingId(null);
     }
   };
 
@@ -183,6 +192,7 @@ export default function HomeScreen() {
           text: "Yes, Decline", 
           style: "destructive",
           onPress: async () => {
+            setDecliningBookingId(bookingId);
             try {
               const response = await fetch(`${API_BASE_URL}/bookings/${bookingId}/provider-cancel`, {
                 method: 'POST',
@@ -197,6 +207,8 @@ export default function HomeScreen() {
             } catch (error: any) {
               console.error("Error declining booking:", error);
               Alert.alert("Error", error.message);
+            } finally {
+              setDecliningBookingId(null);
             }
           }
         }
@@ -205,6 +217,7 @@ export default function HomeScreen() {
   };
 
   const handleArrivedBooking = async (bookingId: string) => {
+    setArrivingBookingId(bookingId);
     try {
       const response = await fetch(`${API_BASE_URL}/bookings/${bookingId}/arrived`, {
         method: 'POST',
@@ -224,6 +237,8 @@ export default function HomeScreen() {
     } catch (error: any) {
       console.error("Error marking arrival:", error);
       Alert.alert("Error", error.message);
+    } finally {
+      setArrivingBookingId(null);
     }
   };
 
@@ -236,6 +251,7 @@ export default function HomeScreen() {
         { 
           text: "Yes, Completed", 
           onPress: async () => {
+            setCompletingBookingId(bookingId);
             try {
               const response = await fetch(`${API_BASE_URL}/bookings/${bookingId}/complete`, {
                 method: 'POST',
@@ -250,6 +266,8 @@ export default function HomeScreen() {
             } catch (error: any) {
               console.error("Error completing booking:", error);
               Alert.alert("Error", error.message);
+            } finally {
+              setCompletingBookingId(null);
             }
           }
         }
@@ -593,11 +611,33 @@ export default function HomeScreen() {
                   <Typography variant="body" weight="bold" color="primary">Rs. {Number(booking.price || 0).toLocaleString()}</Typography>
                 </View>
                 <View style={styles.requestActions}>
-                  <TouchableOpacity style={styles.declineBtn} onPress={() => handleDeclineBooking(booking.id)}>
-                    <Typography variant="caption" weight="bold">Decline</Typography>
+                  <TouchableOpacity 
+                    style={[
+                      styles.declineBtn, 
+                      (decliningBookingId === booking.id || acceptingBookingId === booking.id) && { opacity: 0.7 }
+                    ]} 
+                    onPress={() => handleDeclineBooking(booking.id)}
+                    disabled={decliningBookingId === booking.id || acceptingBookingId === booking.id}
+                  >
+                    {decliningBookingId === booking.id ? (
+                      <ActivityIndicator size="small" color={THEME.colors.primary} />
+                    ) : (
+                      <Typography variant="caption" weight="bold">Decline</Typography>
+                    )}
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.acceptBtn} onPress={() => handleAcceptBooking(booking.id)}>
-                    <Typography variant="caption" color="inverse" weight="bold">Accept Job</Typography>
+                  <TouchableOpacity 
+                    style={[
+                      styles.acceptBtn, 
+                      (decliningBookingId === booking.id || acceptingBookingId === booking.id) && { opacity: 0.7 }
+                    ]} 
+                    onPress={() => handleAcceptBooking(booking.id)}
+                    disabled={decliningBookingId === booking.id || acceptingBookingId === booking.id}
+                  >
+                    {acceptingBookingId === booking.id ? (
+                      <ActivityIndicator size="small" color="#FFF" />
+                    ) : (
+                      <Typography variant="caption" color="inverse" weight="bold">Accept Job</Typography>
+                    )}
                   </TouchableOpacity>
                 </View>
               </Card>
@@ -633,12 +673,35 @@ export default function HomeScreen() {
                     </Typography>
                   </View>
                   {booking.status === 'accepted' ? (
-                    <TouchableOpacity style={styles.actionBtn} onPress={() => handleArrivedBooking(booking.id)}>
-                      <Typography variant="caption" color="inverse" weight="bold">Arrived</Typography>
+                    <TouchableOpacity 
+                      style={[
+                        styles.actionBtn, 
+                        arrivingBookingId === booking.id && { opacity: 0.7 }
+                      ]} 
+                      onPress={() => handleArrivedBooking(booking.id)}
+                      disabled={arrivingBookingId === booking.id}
+                    >
+                      {arrivingBookingId === booking.id ? (
+                        <ActivityIndicator size="small" color="#FFF" />
+                      ) : (
+                        <Typography variant="caption" color="inverse" weight="bold">Arrived</Typography>
+                      )}
                     </TouchableOpacity>
                   ) : (
-                    <TouchableOpacity style={[styles.actionBtn, { backgroundColor: '#10B981' }]} onPress={() => handleCompleteBooking(booking.id)}>
-                      <Typography variant="caption" color="inverse" weight="bold">Complete</Typography>
+                    <TouchableOpacity 
+                      style={[
+                        styles.actionBtn, 
+                        { backgroundColor: '#10B981' },
+                        completingBookingId === booking.id && { opacity: 0.7 }
+                      ]} 
+                      onPress={() => handleCompleteBooking(booking.id)}
+                      disabled={completingBookingId === booking.id}
+                    >
+                      {completingBookingId === booking.id ? (
+                        <ActivityIndicator size="small" color="#FFF" />
+                      ) : (
+                        <Typography variant="caption" color="inverse" weight="bold">Complete</Typography>
+                      )}
                     </TouchableOpacity>
                   )}
                 </View>

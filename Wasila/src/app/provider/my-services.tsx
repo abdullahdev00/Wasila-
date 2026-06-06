@@ -22,6 +22,8 @@ export default function MyServicesScreen() {
   const { user } = useAuthStore();
   const [services, setServices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [updatingServiceId, setUpdatingServiceId] = useState<string | null>(null);
+  const [deletingServiceId, setDeletingServiceId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -47,12 +49,15 @@ export default function MyServicesScreen() {
   }, [user]);
 
   const toggleServiceStatus = async (serviceId: string, currentStatus: boolean) => {
+    setUpdatingServiceId(serviceId);
     try {
       await updateDoc(doc(db, 'services', serviceId), {
         isActive: !currentStatus
       });
     } catch (error) {
       Alert.alert('Error', 'Failed to update service status');
+    } finally {
+      setUpdatingServiceId(null);
     }
   };
 
@@ -66,10 +71,13 @@ export default function MyServicesScreen() {
           text: 'Delete', 
           style: 'destructive', 
           onPress: async () => {
+            setDeletingServiceId(serviceId);
             try {
               await deleteDoc(doc(db, 'services', serviceId));
             } catch (error) {
               Alert.alert('Error', 'Failed to delete service');
+            } finally {
+              setDeletingServiceId(null);
             }
           } 
         }
@@ -135,22 +143,33 @@ export default function MyServicesScreen() {
 
               <View style={styles.cardActions}>
                 <TouchableOpacity 
-                  style={styles.actionBtn}
+                  style={[styles.actionBtn, updatingServiceId === service.id && { opacity: 0.7 }]}
                   onPress={() => toggleServiceStatus(service.id, service.isActive)}
+                  disabled={updatingServiceId === service.id || deletingServiceId === service.id}
                 >
-                  <Ionicons 
-                    name={service.isActive ? "eye-off-outline" : "eye-outline"} 
-                    size={18} 
-                    color={THEME.colors.primary} 
-                  />
-                  <Typography variant="caption" weight="bold" style={{ marginLeft: 6 }}>
-                    {service.isActive ? 'Deactivate' : 'Activate'}
-                  </Typography>
+                  {updatingServiceId === service.id ? (
+                    <ActivityIndicator size="small" color={THEME.colors.primary} />
+                  ) : (
+                    <>
+                      <Ionicons 
+                        name={service.isActive ? "eye-off-outline" : "eye-outline"} 
+                        size={18} 
+                        color={THEME.colors.primary} 
+                      />
+                      <Typography variant="caption" weight="bold" style={{ marginLeft: 6 }}>
+                        {service.isActive ? 'Deactivate' : 'Activate'}
+                      </Typography>
+                    </>
+                  )}
                 </TouchableOpacity>
 
                 <TouchableOpacity 
-                  style={styles.actionBtn}
+                  style={[
+                    styles.actionBtn, 
+                    (updatingServiceId === service.id || deletingServiceId === service.id) && { opacity: 0.5 }
+                  ]}
                   onPress={() => router.push({ pathname: '/provider/add-service', params: { editId: service.id } })}
+                  disabled={updatingServiceId === service.id || deletingServiceId === service.id}
                 >
                   <Ionicons name="create-outline" size={18} color={THEME.colors.primary} />
                   <Typography variant="caption" weight="bold" style={{ marginLeft: 6 }}>
@@ -159,13 +178,20 @@ export default function MyServicesScreen() {
                 </TouchableOpacity>
 
                 <TouchableOpacity 
-                  style={styles.actionBtn}
+                  style={[styles.actionBtn, deletingServiceId === service.id && { opacity: 0.7 }]}
                   onPress={() => deleteService(service.id)}
+                  disabled={updatingServiceId === service.id || deletingServiceId === service.id}
                 >
-                  <Ionicons name="trash-outline" size={18} color={THEME.colors.error} />
-                  <Typography variant="caption" weight="bold" style={{ marginLeft: 6, color: THEME.colors.error }}>
-                    Delete
-                  </Typography>
+                  {deletingServiceId === service.id ? (
+                    <ActivityIndicator size="small" color={THEME.colors.error} />
+                  ) : (
+                    <>
+                      <Ionicons name="trash-outline" size={18} color={THEME.colors.error} />
+                      <Typography variant="caption" weight="bold" style={{ marginLeft: 6, color: THEME.colors.error }}>
+                        Delete
+                      </Typography>
+                    </>
+                  )}
                 </TouchableOpacity>
               </View>
             </Card>
