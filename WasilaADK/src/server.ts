@@ -756,7 +756,7 @@ app.post('/api/chat', async (req, res) => {
         const serviceId = booking.serviceId;
 
         if (issueType === 'no_show') {
-          const scheduledTimestamp = booking.scheduledTimestamp || 0;
+          const scheduledTimestamp = booking.scheduledTimestamp || parseBookingDateToTimestamp(booking.date || 'Tomorrow, 10:00 AM');
           if (scheduledTimestamp && Date.now() < scheduledTimestamp) {
             console.log(`[Dispute Chat Flow] Rejecting premature no_show dispute in chat.`);
             finalReply = `Maazrat, aap ki booking ka scheduled time abhi nahi aaya (Scheduled: ${booking.date || 'unknown'}). Bara-e-meharbani scheduled time guzarne ka intezar karein.`;
@@ -2155,7 +2155,7 @@ app.post('/api/disputes', async (req, res) => {
 
     // Check for premature no-show complaints
     if (issueType === 'no_show') {
-      const scheduledTimestamp = bookingData.scheduledTimestamp || 0;
+      const scheduledTimestamp = bookingData.scheduledTimestamp || parseBookingDateToTimestamp(bookingData.date || 'Tomorrow, 10:00 AM');
       if (scheduledTimestamp && Date.now() < scheduledTimestamp) {
         console.log(`[Dispute Endpoint] Premature no_show dispute rejected. Scheduled time: ${bookingData.date}`);
         return res.json({

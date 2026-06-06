@@ -32,6 +32,46 @@ const getStatusBadgeStyle = (status: string) => {
   return { bg: '#F59E0B20', text: '#F59E0B', label: 'Pending' };
 };
 
+const parseBookingDateToTimestamp = (dateStr: string): number => {
+  const now = new Date();
+  let targetDate = new Date();
+  const lower = dateStr.toLowerCase();
+  if (lower.includes('tomorrow') || lower.includes('kl') || lower.includes('kal')) {
+    targetDate.setDate(now.getDate() + 1);
+  } else if (lower.includes('today') || lower.includes('aaj')) {
+    targetDate.setDate(now.getDate());
+  }
+  let hours = 10;
+  let minutes = 0;
+  const timeRegex = /(\d{1,2}):(\d{2})\s*(am|pm)/i;
+  const match = lower.match(timeRegex);
+  if (match) {
+    hours = parseInt(match[1]);
+    minutes = parseInt(match[2]);
+    const ampm = match[3];
+    if (ampm.toLowerCase() === 'pm' && hours < 12) hours += 12;
+    if (ampm.toLowerCase() === 'am' && hours === 12) hours = 0;
+  } else {
+    const bjyRegex = /(\d{1,2})\s*(bjy|pm|am)/i;
+    const bjyMatch = lower.match(bjyRegex);
+    if (bjyMatch) {
+      hours = parseInt(bjyMatch[1]);
+      const marker = bjyMatch[2].toLowerCase();
+      if (marker === 'bjy' || marker === 'pm') {
+        if (hours < 12) {
+          if (hours >= 9 && hours <= 11) {
+            // keep morning AM
+          } else {
+            hours += 12;
+          }
+        }
+      }
+    }
+  }
+  targetDate.setHours(hours, minutes, 0, 0);
+  return targetDate.getTime();
+};
+
 export default function BookingsScreen() {
   const { user } = useAuthStore();
   const router = useRouter();
@@ -381,7 +421,7 @@ export default function BookingsScreen() {
     
     // Client-side early guard check for No-Show
     if (disputeIssueType === 'no_show') {
-      const scheduledTime = selectedBookingToDispute.scheduledTimestamp || 0;
+      const scheduledTime = selectedBookingToDispute.scheduledTimestamp || parseBookingDateToTimestamp(selectedBookingToDispute.date || 'Tomorrow, 10:00 AM');
       if (scheduledTime && Date.now() < scheduledTime) {
         Alert.alert(
           "Notice / Ghalti", 
