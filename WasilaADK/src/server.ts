@@ -1279,16 +1279,18 @@ app.post('/api/chat', async (req, res) => {
       }
 
       // 4. Concierge Generation Phase
-      const state = { 
-        userName: userName,
-        userAddress: userAddress,
-        bookings: userBookings,
-        bestMatch: finalBestMatch, 
-        bookingStatus: parsed.action === 'view_bookings' ? 'LISTING_BOOKINGS' : (finalBestMatch ? 'PROPOSAL_READY' : (resolvedCategory ? 'NO_MATCH' : 'SEARCHING')),
-        history: userMemory.history
-      };
-      const response = await callConcierge(message, state);
-      finalReply = response.reply;
+      if (!actionResult) {
+        const state = { 
+          userName: userName,
+          userAddress: userAddress,
+          bookings: userBookings,
+          bestMatch: finalBestMatch, 
+          bookingStatus: parsed.action === 'view_bookings' ? 'LISTING_BOOKINGS' : (finalBestMatch ? 'PROPOSAL_READY' : (resolvedCategory ? 'NO_MATCH' : 'SEARCHING')),
+          history: userMemory.history
+        };
+        const response = await callConcierge(message, state);
+        finalReply = response.reply;
+      }
 
       // Save the provider ID and full match for the next message (if they say "book it" or "hmm")
       if (matchResult?.bestMatch) {

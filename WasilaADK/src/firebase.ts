@@ -199,7 +199,23 @@ export async function saveChatSession(
       console.warn("Failed to fetch user photo for chat:", e);
     }
 
-    const chatData: any = {
+    const deepSanitizeFirestore = (val: any): any => {
+      if (val === undefined) return null;
+      if (val === null) return null;
+      if (Array.isArray(val)) {
+        return val.map(deepSanitizeFirestore);
+      }
+      if (typeof val === 'object') {
+        const cleaned: any = {};
+        for (const k of Object.keys(val)) {
+          cleaned[k] = deepSanitizeFirestore(val[k]);
+        }
+        return cleaned;
+      }
+      return val;
+    };
+
+    const chatData: any = deepSanitizeFirestore({
       id: sessionId,
       userId,
       userName,
@@ -207,10 +223,7 @@ export async function saveChatSession(
       updatedAt: new Date().toISOString(),
       messages,
       ...metadata
-    };
-
-    // Remove undefined fields
-    Object.keys(chatData).forEach(key => chatData[key] === undefined && delete chatData[key]);
+    });
 
     if (chatSnap.exists()) {
       await updateDoc(chatDocRef, chatData);
