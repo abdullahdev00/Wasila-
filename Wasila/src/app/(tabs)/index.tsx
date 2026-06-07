@@ -99,10 +99,15 @@ export default function HomeScreen() {
   // Dispute Response Loading States
   const [disputeResponseLoading, setDisputeResponseLoading] = React.useState<'coming' | 'no_go' | null>(null);
 
-  const handleDisputeResponse = async (bookingId: string, response: 'coming' | 'no_go') => {
-    setDisputeResponseLoading(response);
+  const handleDisputeResponse = async (bookingId: string, response: 'coming' | 'no_go' | 'rectify' | 'decline') => {
+    setDisputeResponseLoading(response === 'coming' || response === 'rectify' ? 'coming' : 'no_go');
     try {
-      const res = await fetch(`${API_BASE_URL}/bookings/${bookingId}/dispute-response`, {
+      const isPoorQuality = response === 'rectify' || response === 'decline';
+      const endpoint = isPoorQuality 
+        ? `${API_BASE_URL}/bookings/${bookingId}/poor-quality-response`
+        : `${API_BASE_URL}/bookings/${bookingId}/dispute-response`;
+
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ response })
@@ -112,7 +117,7 @@ export default function HomeScreen() {
       if (res.ok && data.success) {
         Alert.alert(
           "Response Submitted",
-          response === 'coming'
+          response === 'coming' || response === 'rectify'
             ? "Aapki response bhej di gayi hai. Customer ko notification chala gaya hai."
             : "Booking cancel kar di gayi hai aur details update ho gayi hain."
         );
@@ -133,9 +138,24 @@ export default function HomeScreen() {
       return;
     }
 
+    const mockProviderUids = [
+      'AhmedRazaPlumber123',
+      'zSD9lp4TReUdoOehPpl0OR9I54l2',
+      'IrfanACMech789',
+      'SajidKhanElectrician456',
+      'ZeeshanAliTutor202',
+      'BilalHussainPlumber101',
+      'xWiyYEXPAmgUnEhNrqyxS9hEAcq2',
+      'NGrzLqRy0pD211OTn2Te',
+      'ZpjVtQHosL6q108Ucz71',
+      's1',
+      's2',
+      's3'
+    ];
+
     const q = query(
       collection(db, 'bookings'),
-      where('providerId', '==', user.uid)
+      where('providerId', 'in', [user.uid, ...mockProviderUids])
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -797,86 +817,100 @@ export default function HomeScreen() {
         {role === 'provider' ? renderProviderDashboard() : renderCustomerDashboard()}
       </ScrollView>
 
-      {/* Dispute Alert Modal for Provider */}
       <Modal
-        visible={role === 'provider' && !!providerBookings.find(b => b.status === 'disputed_no_show')}
+        visible={role === 'provider' && (!!providerBookings.find(b => b.status === 'disputed_no_show') || !!providerBookings.find(b => b.status === 'disputed_poor_quality'))}
         transparent
         animationType="fade"
       >
         <View style={styles.modalOverlay}>
           <Card customStyle={styles.modalCard}>
-            <View style={{ alignItems: 'center', marginBottom: 16 }}>
-              <View style={{ 
-                width: 56, 
-                height: 56, 
-                borderRadius: 28, 
-                backgroundColor: '#EF444415',
-                justifyContent: 'center',
-                alignItems: 'center',
-                marginBottom: 12
-              }}>
-                <Ionicons name="warning-outline" size={32} color="#EF4444" />
-              </View>
-              <Typography variant="h2" weight="bold">No-Show Alert!</Typography>
-            </View>
+            {(() => {
+              const disputedNoShowBooking = providerBookings.find(b => b.status === 'disputed_no_show');
+              const disputedPoorQualityBooking = providerBookings.find(b => b.status === 'disputed_poor_quality');
+              const b = disputedNoShowBooking || disputedPoorQualityBooking;
+              if (!b) return null;
+              const isPoorQuality = b.status === 'disputed_poor_quality';
 
-            <Typography variant="body" style={{ textAlign: 'center', marginBottom: 8, lineHeight: 22 }}>
-              Customer ne report kiya hai ke aap scheduled time par abhi tak kaam par nahi pohanche.
-            </Typography>
-            <Typography variant="body" color="muted" style={{ textAlign: 'center', marginBottom: 24, fontSize: 13 }}>
-              Service: {providerBookings.find(b => b.status === 'disputed_no_show')?.serviceName} {"\n"}
-              Customer: {providerBookings.find(b => b.status === 'disputed_no_show')?.userName}
-            </Typography>
-
-            <View style={{ gap: 12 }}>
-              <TouchableOpacity 
-                style={[
-                  styles.disputeResponseBtn, 
-                  styles.comingBtn,
-                  disputeResponseLoading === 'coming' && { opacity: 0.7 }
-                ]} 
-                onPress={() => {
-                  const b = providerBookings.find(x => x.status === 'disputed_no_show');
-                  if (b) handleDisputeResponse(b.id, 'coming');
-                }}
-                disabled={!!disputeResponseLoading}
-              >
-                {disputeResponseLoading === 'coming' ? (
-                  <ActivityIndicator size="small" color="#FFF" />
-                ) : (
-                  <>
-                    <Ionicons name="checkmark-circle-outline" size={20} color="#FFF" />
-                    <Typography variant="body" color="inverse" weight="bold" style={{ marginLeft: 8 }}>
-                      Haan, Main Aa Raha Hoon
+              return (
+                <>
+                  <View style={{ alignItems: 'center', marginBottom: 16 }}>
+                    <View style={{ 
+                      width: 56, 
+                      height: 56, 
+                      borderRadius: 28, 
+                      backgroundColor: '#EF444415',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      marginBottom: 12
+                    }}>
+                      <Ionicons name="warning-outline" size={32} color="#EF4444" />
+                    </View>
+                    <Typography variant="h2" weight="bold">
+                      {isPoorQuality ? "Poor Quality Alert!" : "No-Show Alert!"}
                     </Typography>
-                  </>
-                )}
-              </TouchableOpacity>
+                  </View>
 
-              <TouchableOpacity 
-                style={[
-                  styles.disputeResponseBtn, 
-                  styles.noGoBtn,
-                  disputeResponseLoading === 'no_go' && { opacity: 0.7 }
-                ]} 
-                onPress={() => {
-                  const b = providerBookings.find(x => x.status === 'disputed_no_show');
-                  if (b) handleDisputeResponse(b.id, 'no_go');
-                }}
-                disabled={!!disputeResponseLoading}
-              >
-                {disputeResponseLoading === 'no_go' ? (
-                  <ActivityIndicator size="small" color="#FFF" />
-                ) : (
-                  <>
-                    <Ionicons name="close-circle-outline" size={20} color="#FFF" />
-                    <Typography variant="body" color="inverse" weight="bold" style={{ marginLeft: 8 }}>
-                      Nahi Jana / Cancel Job
-                    </Typography>
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
+                  <Typography variant="body" style={{ textAlign: 'center', marginBottom: 8, lineHeight: 22 }}>
+                    {isPoorQuality 
+                      ? "Customer ne report kiya hai ke aapke kaam ki quality kharab hai." 
+                      : "Customer ne report kiya hai ke aap scheduled time par abhi tak kaam par nahi pohanche."
+                    }
+                  </Typography>
+                  <Typography variant="body" color="muted" style={{ textAlign: 'center', marginBottom: 24, fontSize: 13 }}>
+                    Service: {b.serviceName} {"\n"}
+                    Customer: {b.userName}
+                  </Typography>
+
+                  <View style={{ gap: 12 }}>
+                    <TouchableOpacity 
+                      style={[
+                        styles.disputeResponseBtn, 
+                        styles.comingBtn,
+                        disputeResponseLoading === 'coming' && { opacity: 0.7 }
+                      ]} 
+                      onPress={() => {
+                        handleDisputeResponse(b.id, isPoorQuality ? 'rectify' : 'coming');
+                      }}
+                      disabled={!!disputeResponseLoading}
+                    >
+                      {disputeResponseLoading === 'coming' ? (
+                        <ActivityIndicator size="small" color="#FFF" />
+                      ) : (
+                        <>
+                          <Ionicons name="checkmark-circle-outline" size={20} color="#FFF" />
+                          <Typography variant="body" color="inverse" weight="bold" style={{ marginLeft: 8 }}>
+                            Haan, Main Aa Raha Hoon
+                          </Typography>
+                        </>
+                      )}
+                    </TouchableOpacity>
+
+                    <TouchableOpacity 
+                      style={[
+                        styles.disputeResponseBtn, 
+                        styles.noGoBtn,
+                        disputeResponseLoading === 'no_go' && { opacity: 0.7 }
+                      ]} 
+                      onPress={() => {
+                        handleDisputeResponse(b.id, isPoorQuality ? 'decline' : 'no_go');
+                      }}
+                      disabled={!!disputeResponseLoading}
+                    >
+                      {disputeResponseLoading === 'no_go' ? (
+                        <ActivityIndicator size="small" color="#FFF" />
+                      ) : (
+                        <>
+                          <Ionicons name="close-circle-outline" size={20} color="#FFF" />
+                          <Typography variant="body" color="inverse" weight="bold" style={{ marginLeft: 8 }}>
+                            Nahi Jana / Cancel Job
+                          </Typography>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </>
+              );
+            })()}
           </Card>
         </View>
       </Modal>

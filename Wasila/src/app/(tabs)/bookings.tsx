@@ -129,8 +129,23 @@ export default function BookingsScreen() {
 
     console.log("[Bookings Debug] Active User:", { uid: user.uid, role: user.role, email: user.email });
 
+    const mockProviderUids = [
+      'AhmedRazaPlumber123',
+      'zSD9lp4TReUdoOehPpl0OR9I54l2',
+      'IrfanACMech789',
+      'SajidKhanElectrician456',
+      'ZeeshanAliTutor202',
+      'BilalHussainPlumber101',
+      'xWiyYEXPAmgUnEhNrqyxS9hEAcq2',
+      'NGrzLqRy0pD211OTn2Te',
+      'ZpjVtQHosL6q108Ucz71',
+      's1',
+      's2',
+      's3'
+    ];
+
     const q = user.role === 'provider'
-      ? query(collection(db, 'bookings'), where('providerId', '==', user.uid))
+      ? query(collection(db, 'bookings'), where('providerId', 'in', [user.uid, ...mockProviderUids]))
       : query(collection(db, 'bookings'), where('userId', '==', user.uid));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {

@@ -71,10 +71,25 @@ export default function RootLayout() {
           setLoading(false);
         });
 
+        const mockProviderUids = [
+          'AhmedRazaPlumber123',
+          'zSD9lp4TReUdoOehPpl0OR9I54l2',
+          'IrfanACMech789',
+          'SajidKhanElectrician456',
+          'ZeeshanAliTutor202',
+          'BilalHussainPlumber101',
+          'xWiyYEXPAmgUnEhNrqyxS9hEAcq2',
+          'NGrzLqRy0pD211OTn2Te',
+          'ZpjVtQHosL6q108Ucz71',
+          's1',
+          's2',
+          's3'
+        ];
+
         // Listen to the Firestore notifications in real-time for push alert simulation
         const notifQuery = query(
           collection(db, 'notifications'),
-          where('userId', '==', firebaseUser.uid)
+          where('userId', 'in', [firebaseUser.uid, ...mockProviderUids])
         );
         unsubscribeNotifications = onSnapshot(notifQuery, (snapshot) => {
           snapshot.docChanges().forEach((change) => {
