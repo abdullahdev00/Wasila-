@@ -90,109 +90,43 @@ async function runTest() {
     console.log("Dispute Agent Output:");
     console.log(JSON.stringify(decision, null, 2));
 
-    if (!decision.isValid || decision.action !== 'refund_difference' || decision.refundAmount !== 500) {
-      throw new Error("Dispute Agent output is incorrect for Overcharge case!");
+    if (decision.isValid || decision.action !== 'rejected' || decision.refundAmount !== 0) {
+      throw new Error("Dispute Agent output is incorrect for Overcharge check case!");
     }
-    console.log("✓ Dispute Agent correctly resolved the Overcharge dispute.\n");
+    console.log("✓ Dispute Agent correctly rejected the Overcharge dispute.\n");
 
-    // 5. Execute Resolution Actions (Deduct Provider, Refund Customer, Warning notification)
-    console.log("Step 5: Executing overcharge resolution actions...");
-    
-    // A. Update booking payment status
-    await updateDoc(doc(db, 'bookings', bookingId), {
-      paymentStatus: 'refunded_partially',
-      disputedAt: Date.now()
-    });
-
-    // B. Deduct overcharge from provider wallet
-    const providerUserRef = doc(db, 'users', testProviderUserId);
-    const providerUserSnap2 = await getDoc(providerUserRef);
-    const pBalance = providerUserSnap2.data()?.walletBalance || 0;
-    await setDoc(providerUserRef, {
-      walletBalance: pBalance - decision.refundAmount
-    }, { merge: true });
-
-    // Log provider penalty transaction
-    await logTransaction(
-      testProviderUserId,
-      "Test Overcharge Provider",
-      'customer',
-      "Test Overcharge Customer",
-      bookingId,
-      decision.refundAmount,
-      'penalty',
-      `Rs. ${decision.refundAmount} deducted due to overcharge dispute resolution`
-    );
-
-    // Create warning notification for provider
-    await addDoc(collection(db, 'notifications'), {
-      userId: testProviderUserId,
-      title: "Overcharge Penalty Alert",
-      message: `Customer ke dispute ki wajah se aap ke wallet se Rs. ${decision.refundAmount} deduct kar liye gaye hain.`,
-      type: 'dispute_penalty',
-      bookingId: bookingId,
-      timestamp: new Date().toISOString(),
-      read: false
-    });
-
-    // C. Deduct earnings from service doc
-    const serviceRef = doc(db, 'services', testProviderId);
-    const sSnap = await getDoc(serviceRef);
-    const sEarnings = sSnap.data()?.earnings || 0;
-    await updateDoc(serviceRef, {
-      earnings: sEarnings - decision.refundAmount
-    });
-
-    // D. Refund customer wallet
-    const customerUserRef = doc(db, 'users', testUserId);
-    const customerUserSnap2 = await getDoc(customerUserRef);
-    const cBalance = customerUserSnap2.data()?.walletBalance || 0;
-    await setDoc(customerUserRef, {
-      walletBalance: cBalance + decision.refundAmount
-    }, { merge: true });
-
-    // Log customer refund transaction
-    await logTransaction(
-      testUserId,
-      "Test Overcharge Customer",
-      testProviderId,
-      "Test Overcharge Provider",
-      bookingId,
-      decision.refundAmount,
-      'refund',
-      `Rs. ${decision.refundAmount} refunded due to overcharge dispute resolution`
-    );
-
-    // E. Save dispute document
+    // 5. Save dispute document as rejected
+    console.log("Step 5: Saving rejected dispute record...");
     await createDispute(
       bookingId,
       'overcharge',
       'agreed price Rs. 1500 thi, but unho ne extra cash le kar total Rs. 2000 charge kiya.',
-      decision.action,
-      decision.refundAmount,
-      decision.verdictSummary
+      'rejected',
+      0,
+      decision.verdictSummary,
+      'rejected'
     );
 
-    // 6. Verify final balances
-    console.log("\nStep 6: Verifying final database balances...");
+    // 6. Verify final balances (Must remain unchanged since dispute was rejected)
+    console.log("\nStep 6: Verifying final database balances remain unchanged...");
     const finalCustomerBalances = await getUserBalances(testUserId);
     const finalProviderUserSnap = await getDoc(doc(db, 'users', testProviderUserId));
     const finalProviderWallet = finalProviderUserSnap.data()?.walletBalance;
     const finalServiceSnap = await getDoc(doc(db, 'services', testProviderId));
     const finalServiceEarnings = finalServiceSnap.data()?.earnings;
 
-    console.log(`Final Customer Wallet: Rs. ${finalCustomerBalances.walletBalance} (Expected: Rs. 4,000)`);
-    console.log(`Final Provider Wallet: Rs. ${finalProviderWallet} (Expected: Rs. 1,000)`);
-    console.log(`Final Provider Service Earnings: Rs. ${finalServiceEarnings} (Expected: Rs. 1,000)`);
+    console.log(`Final Customer Wallet: Rs. ${finalCustomerBalances.walletBalance} (Expected: Rs. 3,500)`);
+    console.log(`Final Provider Wallet: Rs. ${finalProviderWallet} (Expected: Rs. 1,500)`);
+    console.log(`Final Provider Service Earnings: Rs. ${finalServiceEarnings} (Expected: Rs. 1,500)`);
 
-    if (finalCustomerBalances.walletBalance !== 4000) {
-      throw new Error("Final customer wallet balance verification failed!");
+    if (finalCustomerBalances.walletBalance !== 3500) {
+      throw new Error("Final customer wallet balance verification failed (should remain Rs. 3,500)!");
     }
-    if (finalProviderWallet !== 1000) {
-      throw new Error("Final provider wallet balance verification failed!");
+    if (finalProviderWallet !== 1500) {
+      throw new Error("Final provider wallet balance verification failed (should remain Rs. 1,500)!");
     }
-    if (finalServiceEarnings !== 1000) {
-      throw new Error("Final provider service earnings verification failed!");
+    if (finalServiceEarnings !== 1500) {
+      throw new Error("Final provider service earnings verification failed (should remain Rs. 1,500)!");
     }
 
     console.log("\n=================================================");

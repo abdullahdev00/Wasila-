@@ -11,6 +11,17 @@ export class DisputeAgent {
     beforeImage?: string,
     afterImage?: string
   ) {
+    if (issueType === 'overcharge') {
+      const price = bookingData.price || 0;
+      return {
+        isValid: false,
+        refundAmount: 0,
+        providerPenalty: 0,
+        verdictSummary: `Overcharge ki shikayat ghalat hai kyun ke aap ke wallet se Rs. ${price.toLocaleString()} deduct hue hain jo ke agreed price thi. Extra amount deduct nahi hui.`,
+        action: "rejected"
+      };
+    }
+
     // 1. Visual Auditing for Poor Quality Disputes (using Before and After Images)
     if (issueType === 'poor_quality' && (beforeImage || afterImage)) {
       console.log(`[DisputeAgent] Initiating visual quality dispute audit using Gemini 2.5 Flash...`);
