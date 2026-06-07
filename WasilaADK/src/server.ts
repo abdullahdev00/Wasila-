@@ -2637,6 +2637,9 @@ app.post('/api/bookings/:bookingId/poor-quality-response', async (req, res) => {
       disputeDocRef = doc(db, 'disputes', firstDispute.id);
     }
 
+    const providerId = bookingData.providerId;
+    const serviceId = bookingData.serviceId;
+
     if (response === 'rectify') {
       await retryDb(() => updateDoc(bookingRef, {
         status: 'provider_rectifying',
@@ -2667,6 +2670,83 @@ app.post('/api/bookings/:bookingId/poor-quality-response', async (req, res) => {
       return res.json({
         success: true,
         message: "Status updated to rectifying. Customer notified."
+      });
+
+    } else if (response === 'decline') {
+      // 1. Update booking status
+      await retryDb(() => updateDoc(bookingRef, {
+        status: 'cancelled_by_dispute',
+        paymentStatus: 'refunded_full',
+        poorQualityAction: 'decline'
+      }));
+
+      // 2. Refund client
+      try {
+        await refundBookingPayment(
+          userId,
+          bookingId,
+          bookingData.price || 0,
+          serviceId || '',
+          bookingData.providerName || 'Professional'
+        );
+      } catch (escrowErr: any) {
+        console.warn(`[Quality Decline] Refund failed for booking ${bookingId}:`, escrowErr.message);
+      }
+
+      // 3. Deduct reliability score
+      if (serviceId) {
+        const serviceRef = doc(db, 'services', serviceId);
+        const serviceSnap = await retryDb(() => getDoc(serviceRef));
+        if (serviceSnap.exists()) {
+          const serviceData = serviceSnap.data();
+          const currentScore = serviceData.reliabilityScore !== undefined ? serviceData.reliabilityScore : 100;
+          await retryDb(() => updateDoc(serviceRef, {
+            reliabilityScore: Math.max(0, currentScore - 10)
+          }));
+          console.log(`[Quality Penalty - Decline] Deducted -10 reliability points. New score: ${Math.max(0, currentScore - 10)}`);
+        }
+      }
+
+      // 4. Blacklist provider
+      try {
+        const userRef = doc(db, 'users', userId);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+          const userData = userSnap.data();
+          const blacklist = userData.blacklistedProviders || [];
+          if (providerId && !blacklist.includes(providerId)) {
+            blacklist.push(providerId);
+            await updateDoc(userRef, { blacklistedProviders: blacklist });
+          }
+        }
+      } catch (blacklistErr: any) {
+        console.warn(`[Quality Decline] Blacklist update failed:`, blacklistErr.message);
+      }
+
+      // 5. Update dispute status
+      if (disputeDocRef) {
+        await retryDb(() => updateDoc(disputeDocRef, {
+          status: 'resolved',
+          customerSatisfaction: 'unsatisfied',
+          verdictSummary: "Provider declined to rectify. Reliability penalized (-10 points) and blacklisted."
+        }));
+      }
+
+      // 6. Notify Customer
+      const notifCol = collection(db, 'notifications');
+      await retryDb(() => addDoc(notifCol, {
+        userId: userId,
+        title: "Provider Declined / Rating Reduced",
+        message: `${bookingData.providerName || 'Provider'} ne aane se mana kar diya hai. Humne unki reliability rating kam kar di hai. Aap unki jagah kisi naye provider ko book kar sakte hain.`,
+        type: 'quality_decline',
+        bookingId: bookingId,
+        timestamp: new Date().toISOString(),
+        read: false
+      }));
+
+      return res.json({
+        success: true,
+        message: "Provider declined. Penalty applied and customer notified."
       });
 
     } else if (response === 'explain') {

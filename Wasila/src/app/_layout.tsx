@@ -6,6 +6,7 @@ import { doc, getDoc, setDoc, onSnapshot, collection, query, where } from 'fireb
 import { auth, db } from '../lib/firebase';
 import { useAuthStore, UserRole, UserProfile } from '../store/useAuthStore';
 import { View, ActivityIndicator, Alert } from 'react-native';
+import { API_BASE_URL } from '../lib/apiConfig';
 
 export default function RootLayout() {
   const { user, setUser, isLoading, setLoading } = useAuthStore();
@@ -80,7 +81,58 @@ export default function RootLayout() {
             if (change.type === 'added') {
               const data = change.doc.data();
               if (data.timestamp && data.timestamp > appStartTime) {
-                Alert.alert("Wasila Notification", data.message);
+                if (data.type === 'poor_quality_alert') {
+                  Alert.alert(
+                    "Poor Quality Work Reported",
+                    data.message,
+                    [
+                      {
+                        text: "Main Aa Raha Hoon",
+                        onPress: async () => {
+                          try {
+                            const res = await fetch(`${API_BASE_URL}/bookings/${data.bookingId}/poor-quality-response`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ response: 'rectify' })
+                            });
+                            const resData = await res.json();
+                            if (res.ok) {
+                              Alert.alert("Success", "Aap ka response send ho gaya hai. Customer ko notify kar diya gaya hai.");
+                            } else {
+                              Alert.alert("Error", resData.error || "Response send karne mein masla pesh aya.");
+                            }
+                          } catch (e: any) {
+                            Alert.alert("Error", e.message);
+                          }
+                        }
+                      },
+                      {
+                        text: "Main Nahi Aa Raha",
+                        style: "destructive",
+                        onPress: async () => {
+                          try {
+                            const res = await fetch(`${API_BASE_URL}/bookings/${data.bookingId}/poor-quality-response`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ response: 'decline' })
+                            });
+                            const resData = await res.json();
+                            if (res.ok) {
+                              Alert.alert("Response Sent", "Humne customer ko inform kar diya hai aur rating penalty apply kar di hai.");
+                            } else {
+                              Alert.alert("Error", resData.error || "Response send karne mein masla pesh aya.");
+                            }
+                          } catch (e: any) {
+                            Alert.alert("Error", e.message);
+                          }
+                        }
+                      }
+                    ],
+                    { cancelable: false }
+                  );
+                } else {
+                  Alert.alert("Wasila Notification", data.message);
+                }
               }
             }
           });
