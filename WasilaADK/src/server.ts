@@ -76,7 +76,8 @@ app.post('/api/chat', async (req, res) => {
       userName: rawUserName,
       location: clientLocation,
       latitude: clientLatitude,
-      longitude: clientLongitude
+      longitude: clientLongitude,
+      imageUrl
     } = req.body;
     const userId = rawUserId || 'guest';
     console.log(`\n--- New API Request: "${message}" (User: ${userId}) ---`);
@@ -494,6 +495,7 @@ app.post('/api/chat', async (req, res) => {
     userMemory.fullMessages.push({
       sender: 'user',
       text: message,
+      imageUrl: imageUrl || undefined,
       timestamp: new Date().toISOString()
     });
 

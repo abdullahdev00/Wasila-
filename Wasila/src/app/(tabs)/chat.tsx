@@ -524,6 +524,7 @@ export default function ChatScreen() {
   const [loadingChats, setLoadingChats] = useState(false);
   const [selectedChat, setSelectedChat] = useState<any | null>(null);
   const [chatImageUploading, setChatImageUploading] = useState(false);
+  const [selectedChatImage, setSelectedChatImage] = useState('');
 
   const activeChatDoc = userChats.find(c => c.id === currentSessionId);
   const isDirectChatActive = activeChatDoc ? activeChatDoc.directChatActive === true : false;
@@ -631,10 +632,10 @@ export default function ChatScreen() {
       setChatImageUploading(true);
       try {
         const url = await uploadChatImage(result.assets[0].uri);
-        await sendImageMessage(url);
+        setSelectedChatImage(url);
       } catch (err: any) {
-        console.error("Image pick & send error:", err);
-        Alert.alert('Error', 'Image upload/send failed: ' + err.message);
+        console.error("Image pick & upload error:", err);
+        Alert.alert('Error', 'Image upload failed: ' + err.message);
       } finally {
         setChatImageUploading(false);
       }
@@ -663,22 +664,24 @@ export default function ChatScreen() {
   };
 
   const sendProviderMessage = async () => {
-    if (!inputText.trim() || !selectedChat) return;
+    if ((!inputText.trim() && !selectedChatImage) || !selectedChat) return;
 
     const providerMsg = {
       id: Date.now().toString(),
       sender: 'provider' as const,
       text: inputText.trim(),
+      imageUrl: selectedChatImage || undefined,
       timestamp: new Date().toISOString()
     };
 
     setInputText('');
+    setSelectedChatImage('');
 
     try {
       const chatDocRef = doc(db, 'chats', selectedChat.id);
       await updateDoc(chatDocRef, {
         messages: arrayUnion(providerMsg),
-        lastMessage: providerMsg.text,
+        lastMessage: providerMsg.text || "Sent an image",
         updatedAt: new Date().toISOString()
       });
       console.log(`[Provider Send] Message sent to Firestore chat ${selectedChat.id}`);
@@ -798,11 +801,17 @@ export default function ChatScreen() {
   }, [providerChats]);
 
   const sendMessage = async () => {
-    if (!inputText.trim()) return;
+    if (!inputText.trim() && !selectedChatImage) return;
 
-    const userMsg: Message = { id: Date.now().toString(), sender: 'user', text: inputText.trim() };
+    const userMsg: Message = { 
+      id: Date.now().toString(), 
+      sender: 'user', 
+      text: inputText.trim(),
+      imageUrl: selectedChatImage || undefined
+    };
     setMessages(prev => [...prev, userMsg]);
     setInputText('');
+    setSelectedChatImage('');
     setIsLoading(true);
     setActiveTraces([]);
 
@@ -822,9 +831,10 @@ export default function ChatScreen() {
             id: userMsg.id,
             sender: 'user',
             text: userMsg.text,
+            imageUrl: userMsg.imageUrl || null,
             timestamp: new Date().toISOString()
           }),
-          lastMessage: userMsg.text,
+          lastMessage: userMsg.text || "Sent an image",
           updatedAt: new Date().toISOString()
         });
       } catch (err: any) {
@@ -852,7 +862,8 @@ export default function ChatScreen() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          message: userMsg.text,
+          message: userMsg.text || (userMsg.imageUrl ? "Uploaded image: " + userMsg.imageUrl : ""),
+          imageUrl: userMsg.imageUrl,
           userId: user?.uid || 'guest',
           userName: user?.name || '',
           sessionId: sessionIdToUse,
@@ -1076,6 +1087,36 @@ export default function ChatScreen() {
                   contentContainerStyle={styles.chatList}
                   showsVerticalScrollIndicator={false}
                 />
+                {selectedChatImage ? (
+                  <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    backgroundColor: '#F8FAFC',
+                    padding: 8,
+                    marginHorizontal: 16,
+                    marginBottom: 4,
+                    borderRadius: 12,
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    alignSelf: 'flex-start'
+                  }}>
+                    <Image 
+                      source={{ uri: selectedChatImage }} 
+                      style={{ width: 48, height: 48, borderRadius: 8 }} 
+                    />
+                    <TouchableOpacity 
+                      style={{
+                        marginLeft: 8,
+                        backgroundColor: '#EF4444',
+                        borderRadius: 12,
+                        padding: 4
+                      }}
+                      onPress={() => setSelectedChatImage('')}
+                    >
+                      <Ionicons name="close-outline" size={14} color="#FFF" />
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
                 <View style={styles.inputContainer}>
                   <TouchableOpacity 
                     style={{
@@ -1105,9 +1146,9 @@ export default function ChatScreen() {
                     multiline
                   />
                   <TouchableOpacity 
-                    style={[styles.sendBtn, !inputText.trim() && styles.sendBtnDisabled]}
+                    style={[styles.sendBtn, (!inputText.trim() && !selectedChatImage) && styles.sendBtnDisabled]}
                     onPress={sendProviderMessage}
-                    disabled={!inputText.trim()}
+                    disabled={!inputText.trim() && !selectedChatImage}
                   >
                     <Ionicons name="send" size={20} color="#FFFFFF" />
                   </TouchableOpacity>
@@ -1149,6 +1190,36 @@ export default function ChatScreen() {
             onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
           />
 
+          {selectedChatImage ? (
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: '#F8FAFC',
+              padding: 8,
+              marginHorizontal: 16,
+              marginBottom: 4,
+              borderRadius: 12,
+              borderWidth: 1,
+              borderColor: '#E2E8F0',
+              alignSelf: 'flex-start'
+            }}>
+              <Image 
+                source={{ uri: selectedChatImage }} 
+                style={{ width: 48, height: 48, borderRadius: 8 }} 
+              />
+              <TouchableOpacity 
+                style={{
+                  marginLeft: 8,
+                  backgroundColor: '#EF4444',
+                  borderRadius: 12,
+                  padding: 4
+                }}
+                onPress={() => setSelectedChatImage('')}
+              >
+                <Ionicons name="close-outline" size={14} color="#FFF" />
+              </TouchableOpacity>
+            </View>
+          ) : null}
           <View style={styles.inputContainer}>
             <TouchableOpacity 
               style={{
@@ -1178,9 +1249,9 @@ export default function ChatScreen() {
               multiline
             />
             <TouchableOpacity 
-              style={[styles.sendBtn, !inputText.trim() && styles.sendBtnDisabled]}
+              style={[styles.sendBtn, (!inputText.trim() && !selectedChatImage) && styles.sendBtnDisabled]}
               onPress={sendMessage}
-              disabled={!inputText.trim() || isLoading}
+              disabled={(!inputText.trim() && !selectedChatImage) || isLoading}
             >
               {isLoading ? (
                 <ActivityIndicator color="#FFFFFF" size="small" />
