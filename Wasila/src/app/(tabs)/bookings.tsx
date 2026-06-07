@@ -875,22 +875,6 @@ export default function BookingsScreen() {
                 </Typography>
               </TouchableOpacity>
 
-              {/* Option 3: Late Arrival (Coming Soon) */}
-              <TouchableOpacity 
-                style={[
-                  styles.issueOption, 
-                  styles.issueOptionDisabled
-                ]}
-                onPress={() => {
-                  Alert.alert("Notice", "Late aane ki shikayat aglay chunk me active hogi. Abhi testing ke liye sirf 'Provider nahi aya' select karein.");
-                }}
-              >
-                <Ionicons name="time-outline" size={20} color="#94A3B8" />
-                <Typography variant="body" style={{ marginLeft: 8, color: '#94A3B8' }}>
-                  Late aya (Late Arrival) - Jald Asy
-                </Typography>
-              </TouchableOpacity>
-
               {/* Option 4: Poor Quality */}
               <TouchableOpacity 
                 style={[
