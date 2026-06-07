@@ -21,15 +21,7 @@ import { BlurView } from 'expo-blur';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 
-let GoogleMaps: any = null;
-let AppleMaps: any = null;
-try {
-  const Maps = require('expo-maps');
-  GoogleMaps = Maps.GoogleMaps;
-  AppleMaps = Maps.AppleMaps;
-} catch (e) {
-  console.warn("expo-maps native module is not available in this environment.");
-}
+
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { THEME } from '../../theme';
 import { Typography } from '../../components/ui/Typography';
@@ -53,8 +45,8 @@ export default function ProfileScreen() {
   const [editPhone, setEditPhone] = useState('');
   const [editAddress, setEditAddress] = useState('');
   const [editCity, setEditCity] = useState('');
-  const [showMap, setShowMap] = useState(false);
-  const [location, setLocation] = useState<{ latitude: number, longitude: number } | null>(null);
+  const [editLat, setEditLat] = useState('');
+  const [editLng, setEditLng] = useState('');
   
   const role = user?.role || 'customer';
 
@@ -65,24 +57,25 @@ export default function ProfileScreen() {
       setEditPhone(user?.phoneNumber || '');
       setEditAddress(user?.address || '');
       setEditCity(user?.city || '');
-      if (user?.latitude && user?.longitude) {
-        setLocation({ latitude: user.latitude, longitude: user.longitude });
-      }
+      setEditLat(user?.latitude !== undefined && user?.latitude !== null ? String(user.latitude) : '');
+      setEditLng(user?.longitude !== undefined && user?.longitude !== null ? String(user.longitude) : '');
     }
   }, [isEditing, user]);
 
   const getCurrentLocation = async () => {
     let { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Permission denied', 'Allow location access to pick your shop location.');
+      Alert.alert('Permission denied', 'Allow location access to get your coordinates.');
       return;
     }
 
-    let loc = await Location.getCurrentPositionAsync({});
-    setLocation({
-      latitude: loc.coords.latitude,
-      longitude: loc.coords.longitude,
-    });
+    try {
+      let loc = await Location.getCurrentPositionAsync({});
+      setEditLat(String(loc.coords.latitude));
+      setEditLng(String(loc.coords.longitude));
+    } catch (e) {
+      Alert.alert('Error', 'Failed to retrieve current location coordinates.');
+    }
   };
 
   const handleLogout = async () => {
@@ -159,6 +152,18 @@ export default function ProfileScreen() {
       return;
     }
 
+    const latVal = editLat.trim() ? parseFloat(editLat) : null;
+    const lngVal = editLng.trim() ? parseFloat(editLng) : null;
+
+    if (latVal !== null && (isNaN(latVal) || latVal < -90 || latVal > 90)) {
+      Alert.alert('Invalid Latitude', 'Please enter a valid latitude between -90 and 90.');
+      return;
+    }
+    if (lngVal !== null && (isNaN(lngVal) || lngVal < -180 || lngVal > 180)) {
+      Alert.alert('Invalid Longitude', 'Please enter a valid longitude between -180 and 180.');
+      return;
+    }
+
     setIsSaving(true);
     try {
       await updateDoc(doc(db, 'users', user.uid), {
@@ -166,16 +171,16 @@ export default function ProfileScreen() {
         phoneNumber: editPhone,
         address: editAddress,
         city: editCity,
-        latitude: location?.latitude || null,
-        longitude: location?.longitude || null,
+        latitude: latVal,
+        longitude: lngVal,
       });
       updateUser({ 
         name: editName, 
         phoneNumber: editPhone,
         address: editAddress,
         city: editCity,
-        latitude: location?.latitude,
-        longitude: location?.longitude,
+        latitude: latVal ?? undefined,
+        longitude: lngVal ?? undefined,
       });
       setIsEditing(false);
       Alert.alert('Success', 'Profile updated!');
@@ -280,205 +285,118 @@ export default function ProfileScreen() {
               <Typography variant="h2" weight="bold">Edit Profile</Typography>
             </View>
 
-            <View style={styles.modalBody}>
-              <View style={styles.inputGroup}>
-                <Typography variant="caption" color="muted" style={styles.inputLabel}>Full Name</Typography>
-                <View style={styles.inputWrapper}>
-                  <Ionicons name="person-outline" size={20} color={THEME.colors.primary} style={styles.inputIcon} />
-                  <TextInput
-                    style={styles.textInput}
-                    value={editName}
-                    onChangeText={setEditName}
-                    placeholder="Enter name"
-                    editable={!isSaving}
-                  />
+            <ScrollView style={{ maxHeight: Dimensions.get('window').height * 0.7 }} showsVerticalScrollIndicator={false}>
+              <View style={styles.modalBody}>
+                <View style={styles.inputGroup}>
+                  <Typography variant="caption" color="muted" style={styles.inputLabel}>Full Name</Typography>
+                  <View style={styles.inputWrapper}>
+                    <Ionicons name="person-outline" size={20} color={THEME.colors.primary} style={styles.inputIcon} />
+                    <TextInput
+                      style={styles.textInput}
+                      value={editName}
+                      onChangeText={setEditName}
+                      placeholder="Enter name"
+                      editable={!isSaving}
+                    />
+                  </View>
                 </View>
-              </View>
 
-              <View style={styles.inputGroup}>
-                <Typography variant="caption" color="muted" style={styles.inputLabel}>Phone Number</Typography>
-                <View style={styles.inputWrapper}>
-                  <Ionicons name="call-outline" size={20} color={THEME.colors.primary} style={styles.inputIcon} />
-                  <TextInput
-                    style={styles.textInput}
-                    value={editPhone}
-                    onChangeText={setEditPhone}
-                    placeholder="+92 XXX XXXXXXX"
-                    keyboardType="phone-pad"
-                    editable={!isSaving}
-                  />
+                <View style={styles.inputGroup}>
+                  <Typography variant="caption" color="muted" style={styles.inputLabel}>Phone Number</Typography>
+                  <View style={styles.inputWrapper}>
+                    <Ionicons name="call-outline" size={20} color={THEME.colors.primary} style={styles.inputIcon} />
+                    <TextInput
+                      style={styles.textInput}
+                      value={editPhone}
+                      onChangeText={setEditPhone}
+                      placeholder="+92 XXX XXXXXXX"
+                      keyboardType="phone-pad"
+                      editable={!isSaving}
+                    />
+                  </View>
                 </View>
-              </View>
 
-              <View style={styles.inputGroup}>
-                <Typography variant="caption" color="muted" style={styles.inputLabel}>City</Typography>
-                <View style={styles.inputWrapper}>
-                  <Ionicons name="business-outline" size={20} color={THEME.colors.primary} style={styles.inputIcon} />
-                  <TextInput
-                    style={styles.textInput}
-                    value={editCity}
-                    onChangeText={setEditCity}
-                    placeholder="e.g. Lahore, Karachi"
-                    editable={!isSaving}
-                  />
+                <View style={styles.inputGroup}>
+                  <Typography variant="caption" color="muted" style={styles.inputLabel}>City</Typography>
+                  <View style={styles.inputWrapper}>
+                    <Ionicons name="business-outline" size={20} color={THEME.colors.primary} style={styles.inputIcon} />
+                    <TextInput
+                      style={styles.textInput}
+                      value={editCity}
+                      onChangeText={setEditCity}
+                      placeholder="e.g. Lahore, Karachi"
+                      editable={!isSaving}
+                    />
+                  </View>
                 </View>
-              </View>
 
-              <View style={styles.inputGroup}>
-                <Typography variant="caption" color="muted" style={styles.inputLabel}>Shop Address / Location</Typography>
-                <View style={styles.inputWrapper}>
-                  <Ionicons name="location-outline" size={20} color={THEME.colors.primary} style={styles.inputIcon} />
-                  <TextInput
-                    style={styles.textInput}
-                    value={editAddress}
-                    onChangeText={setEditAddress}
-                    placeholder="Complete shop address"
-                    editable={!isSaving}
-                  />
+                <View style={styles.inputGroup}>
+                  <Typography variant="caption" color="muted" style={styles.inputLabel}>Shop Address / Location</Typography>
+                  <View style={styles.inputWrapper}>
+                    <Ionicons name="location-outline" size={20} color={THEME.colors.primary} style={styles.inputIcon} />
+                    <TextInput
+                      style={styles.textInput}
+                      value={editAddress}
+                      onChangeText={setEditAddress}
+                      placeholder="Complete shop address"
+                      editable={!isSaving}
+                    />
+                  </View>
                 </View>
-              </View>
 
-              <TouchableOpacity 
-                style={styles.locationPickerBtn}
-                onPress={() => setShowMap(true)}
-              >
-                <View style={styles.locationPickerLeft}>
-                  <Ionicons name="map-outline" size={20} color={THEME.colors.primary} />
-                  <Typography variant="body" style={{ marginLeft: 12 }}>
-                    {location ? 'Location Set' : 'Set Location on Map'}
+                <View style={styles.inputGroup}>
+                  <Typography variant="caption" color="muted" style={styles.inputLabel}>Latitude</Typography>
+                  <View style={styles.inputWrapper}>
+                    <Ionicons name="compass-outline" size={20} color={THEME.colors.primary} style={styles.inputIcon} />
+                    <TextInput
+                      style={styles.textInput}
+                      value={editLat}
+                      onChangeText={setEditLat}
+                      placeholder="e.g. 33.6844"
+                      keyboardType="numeric"
+                      editable={!isSaving}
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Typography variant="caption" color="muted" style={styles.inputLabel}>Longitude</Typography>
+                  <View style={styles.inputWrapper}>
+                    <Ionicons name="compass-outline" size={20} color={THEME.colors.primary} style={styles.inputIcon} />
+                    <TextInput
+                      style={styles.textInput}
+                      value={editLng}
+                      onChangeText={setEditLng}
+                      placeholder="e.g. 73.0479"
+                      keyboardType="numeric"
+                      editable={!isSaving}
+                    />
+                  </View>
+                </View>
+
+
+
+                <TouchableOpacity 
+                  style={styles.currentLocationBtn}
+                  onPress={getCurrentLocation}
+                >
+                  <Ionicons name="locate-outline" size={20} color={THEME.colors.primary} />
+                  <Typography variant="body" style={{ marginLeft: 12, color: THEME.colors.primary }} weight="bold">
+                    Use Current Location
                   </Typography>
-                </View>
-                <Ionicons 
-                  name={location ? "checkmark-circle" : "chevron-forward"} 
-                  size={20} 
-                  color={location ? THEME.colors.success : THEME.colors.textMuted} 
-                />
-              </TouchableOpacity>
+                </TouchableOpacity>
 
-              <View style={styles.modalActions}>
-                <Button label="Cancel" variant="outline" onPress={() => setIsEditing(false)} customStyle={{ flex: 1, marginRight: 12 }} />
-                <Button label="Save" onPress={saveProfile} isLoading={isSaving} customStyle={{ flex: 2 }} />
+                <View style={styles.modalActions}>
+                  <Button label="Cancel" variant="outline" onPress={() => setIsEditing(false)} customStyle={{ flex: 1, marginRight: 12 }} />
+                  <Button label="Save" onPress={saveProfile} isLoading={isSaving} customStyle={{ flex: 2 }} />
+                </View>
               </View>
-            </View>
+            </ScrollView>
           </View>
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Map Modal */}
-      <Modal visible={showMap} animationType="slide" transparent={false}>
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#FFF' }}>
-          <View style={styles.mapHeader}>
-            <TouchableOpacity onPress={() => setShowMap(false)} style={styles.mapBackBtn}>
-              <Ionicons name="chevron-back" size={28} color={THEME.colors.textMain} />
-            </TouchableOpacity>
-            <Typography variant="h3">Pick Shop Location</Typography>
-            <View style={{ width: 40 }} />
-          </View>
 
-          {/* User notice for Expo Go Google Maps authentication */}
-          <View style={styles.mapInfoCard}>
-            <Ionicons name="information-circle-outline" size={20} color="#B45309" style={{ marginRight: 8 }} />
-            <Typography variant="caption" style={{ flex: 1, color: '#92400E', fontSize: 11 }} weight="medium">
-              Expo Go me package name signature restrict hone ki wajah se map blank ho sakta hai. Aap niche <Typography variant="caption" weight="bold" style={{ color: '#92400E' }}>Use Current Location</Typography> dabba kar location auto-fetch kar sakte hain.
-            </Typography>
-          </View>
-          
-          {GoogleMaps && Platform.OS === 'android' ? (
-            <GoogleMaps.View
-              style={styles.map}
-              cameraPosition={{
-                coordinates: {
-                  latitude: location?.latitude || 33.6844,
-                  longitude: location?.longitude || 73.0479,
-                },
-                zoom: 12,
-              }}
-              markers={
-                location
-                  ? [
-                      {
-                        id: 'shop-marker',
-                        coordinates: location,
-                        title: 'Shop Location',
-                      },
-                    ]
-                  : []
-              }
-              onMapClick={(e: any) => {
-                if (e.coordinates.latitude !== undefined && e.coordinates.longitude !== undefined) {
-                  setLocation({
-                    latitude: e.coordinates.latitude,
-                    longitude: e.coordinates.longitude,
-                  });
-                }
-              }}
-            />
-          ) : AppleMaps && Platform.OS === 'ios' ? (
-            <AppleMaps.View
-              style={styles.map}
-              cameraPosition={{
-                coordinates: {
-                  latitude: location?.latitude || 33.6844,
-                  longitude: location?.longitude || 73.0479,
-                },
-                zoom: 12,
-              }}
-              markers={
-                location
-                  ? [
-                      {
-                        id: 'shop-marker',
-                        coordinates: location,
-                        title: 'Shop Location',
-                      },
-                    ]
-                  : []
-              }
-              onMapClick={(e: any) => {
-                if (e.coordinates.latitude !== undefined && e.coordinates.longitude !== undefined) {
-                  setLocation({
-                    latitude: e.coordinates.latitude,
-                    longitude: e.coordinates.longitude,
-                  });
-                }
-              }}
-            />
-          ) : (
-            <View style={[styles.map, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#F1F5F9', padding: 20 }]}>
-              <Ionicons name="map-outline" size={48} color={THEME.colors.textMuted} style={{ marginBottom: 12 }} />
-              <Typography variant="body" color="muted" style={{ textAlign: 'center', marginBottom: 4 }}>Map is not available in Expo Go.</Typography>
-              <Typography variant="caption" color="muted" style={{ textAlign: 'center' }}>Please use the "Use Current Location" button below to set coordinates.</Typography>
-            </View>
-          )}
-
-          {/* Coordinates Display */}
-          <View style={styles.coordsContainer}>
-            <Text style={styles.coordsText}>
-              Lat: {location?.latitude.toFixed(6) || "Not Set"}
-            </Text>
-            <Text style={styles.coordsText}>
-              Long: {location?.longitude.toFixed(6) || "Not Set"}
-            </Text>
-          </View>
-          
-          <View style={styles.mapFooter}>
-            <Typography variant="caption" color="muted" style={{ marginBottom: 16, textAlign: 'center' }}>
-              Tap on the map to set your shop's exact location
-            </Typography>
-            <Button 
-              label="Use Current Location" 
-              variant="outline" 
-              onPress={getCurrentLocation}
-              customStyle={{ marginBottom: 12 }}
-              leftIcon={<Ionicons name="locate" size={20} color={THEME.colors.primary} />}
-            />
-            <Button 
-              label="Confirm Location" 
-              onPress={() => setShowMap(false)} 
-            />
-          </View>
-        </SafeAreaView>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -643,6 +561,18 @@ const styles = StyleSheet.create({
   locationPickerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  currentLocationBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
+    padding: 14,
+    borderRadius: 16,
+    marginTop: 8,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: THEME.colors.primary + '30',
   },
   mapHeader: {
     flexDirection: 'row',

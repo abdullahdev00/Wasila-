@@ -9,6 +9,7 @@ import { PricingAgent } from './agents/PricingAgent';
 import { SupplierAgent } from './agents/SupplierAgent';
 import { CustomerNegotiatorAgent } from './agents/CustomerNegotiatorAgent';
 import { DisputeAgent } from './agents/DisputeAgent';
+import { MemoryAgent } from './agents/MemoryAgent';
 import { getUserName, fetchUserBookings, db, saveChatSession, fetchLastChatSession, createBooking, releaseBookingPayment, refundBookingPayment, logTransaction, createDispute } from './firebase';
 import { getDoc, doc, setDoc, updateDoc, collection, getDocs, addDoc, query, where } from 'firebase/firestore/lite';
 import { callOpenRouter } from './utils/openRouter';
@@ -37,6 +38,7 @@ const pricingAgent = new PricingAgent();
 const supplierAgent = new SupplierAgent();
 const customerNegotiator = new CustomerNegotiatorAgent();
 const disputeAgent = new DisputeAgent();
+const memoryAgent = new MemoryAgent();
 
 // --- IN-MEMORY CHAT STATE ---
 // Stores the last message and provider for each user session without a database
@@ -112,6 +114,7 @@ app.post('/api/chat', async (req, res) => {
     let userLatitude = clientLatitude || null;
     let userLongitude = clientLongitude || null;
 
+    let financialPreferences: any = null;
     if (userId && userId !== 'guest' && !userId.startsWith('test-user-')) {
       try {
         const userSnap = await getDoc(doc(db, 'users', userId));
@@ -127,7 +130,8 @@ app.post('/api/chat', async (req, res) => {
           if (userLongitude === null || userLongitude === undefined) {
             userLongitude = uData.longitude || null;
           }
-          console.log(`[User Profile] Resolved UID '${userId}' to Name: '${userName}', Address: '${userAddress || 'None'}', Lat: ${userLatitude}, Lng: ${userLongitude}`);
+          financialPreferences = uData.financialPreferences || null;
+          console.log(`[User Profile] Resolved UID '${userId}' to Name: '${userName}', Address: '${userAddress || 'None'}', Lat: ${userLatitude}, Lng: ${userLongitude}, FinancialPref:`, financialPreferences);
         }
       } catch (err) {
         console.warn(`[User Profile] Failed to fetch user profile for UID: ${userId}`, err);
@@ -308,7 +312,7 @@ app.post('/api/chat', async (req, res) => {
 
     const callMatchmaker = async (msg: string, category: string, location: string) => {
       await pushAndBroadcastTrace('MatchmakerAgent', 'running', 'Scanning active service providers...');
-      const result = await matchmaker.findMatch(deepSanitize(msg), deepSanitize(category), deepSanitize(location));
+      const result = await matchmaker.findMatch(deepSanitize(msg), deepSanitize(category), deepSanitize(location), undefined, financialPreferences);
       // reasoning comes directly from LLM inside MatchmakerAgent — fully dynamic
       const matchThinking = result.reasoning
         ? `${result.reasoning}${result.bestMatch ? ` → Selected: ${result.bestMatch.name || result.bestMatch.providerName} (Rating: ${result.bestMatch.rating})` : ' → No match found'}`
@@ -624,10 +628,117 @@ app.post('/api/chat', async (req, res) => {
                 console.warn(`[Auto-Book] Failed to fetch service details:`, err);
               }
 
+              // Run A2A negotiation loop
+              const customerProposal = {
+                category: categoryToSearch,
+                serviceName: matchResult.bestMatch.serviceName || matchResult.bestMatch.name,
+                dateTime: parsed.dateTime || 'Tomorrow, 10:00 AM',
+                location: resolvedLocation,
+                quoteTotal: quote.total,
+                proposedPrice: (parsed.proposedPrice && parsed.proposedPrice > 0) ? parsed.proposedPrice : null
+              };
+
+              const negotiationHistory: string[] = [];
+              const negotiationTraces: string[] = [];
+              let currentProposedPrice = quote.total;
+              let currentProposedDateTime = customerProposal.dateTime;
+              let currentStatus = 'pending';
+              let lastSupplierOffer: any = null;
+              const maxTurns = 2; // Strict limit to prevent infinite loops
+
+              for (let turn = 1; turn <= maxTurns; turn++) {
+                // Call Customer Agent
+                await pushAndBroadcastTrace('CustomerNegotiatorAgent', 'running', 'Negotiator formulating offer...');
+                const custOffer = await customerNegotiator.generateOffer(
+                  deepSanitize(customerProposal),
+                  deepSanitize(negotiationHistory),
+                  deepSanitize(lastSupplierOffer),
+                  turn,
+                  maxTurns
+                );
+                
+                await pushAndBroadcastTrace('CustomerNegotiatorAgent', 'done', 'Negotiator formulated offer...', custOffer.reasoning);
+
+                if (custOffer.status === 'accepted') {
+                  currentStatus = 'accepted';
+                  break;
+                } else if (custOffer.status === 'rejected') {
+                  currentStatus = 'rejected';
+                  break;
+                }
+
+                currentProposedPrice = custOffer.negotiatedPrice;
+                currentProposedDateTime = custOffer.negotiatedDateTime;
+
+                console.log(`[A2A Auto-Book Negotiation] Turn ${turn}: Customer Agent proposing Rs. ${currentProposedPrice} at ${currentProposedDateTime}`);
+                negotiationTraces.push(`[Negotiation Turn ${turn}] Customer Agent proposed Rs. ${currentProposedPrice}: "${custOffer.reasoning}"`);
+                negotiationHistory.push(`Customer Agent: Proposed Rs. ${currentProposedPrice} at ${currentProposedDateTime}`);
+
+                // Call Supplier Agent
+                const evaluation = await callSupplier(
+                  userMemory.lastProviderName || 'Professional',
+                  providerInstructions,
+                  {
+                    category: customerProposal.category,
+                    serviceName: customerProposal.serviceName,
+                    dateTime: currentProposedDateTime,
+                    location: customerProposal.location,
+                    proposedPrice: currentProposedPrice,
+                    basePrice: basePrice
+                  },
+                  negotiationHistory
+                );
+
+                lastSupplierOffer = {
+                  status: evaluation.status,
+                  price: evaluation.negotiatedPrice,
+                  time: evaluation.negotiatedDateTime,
+                  reasoning: evaluation.reasoning
+                };
+
+                console.log(`[A2A Auto-Book Negotiation] Supplier Agent Response:`, evaluation);
+                negotiationTraces.push(`[Negotiation Turn ${turn}] ${userMemory.lastProviderName || 'Provider'} Agent: "${evaluation.reasoning}" (Decision: ${evaluation.status})`);
+                negotiationHistory.push(`${userMemory.lastProviderName || 'Provider'} Agent: Decision=${evaluation.status}, Price=${evaluation.negotiatedPrice}, Time=${evaluation.negotiatedDateTime}`);
+
+                if (evaluation.status === 'accepted') {
+                  currentStatus = 'accepted';
+                  currentProposedPrice = evaluation.negotiatedPrice;
+                  currentProposedDateTime = evaluation.negotiatedDateTime;
+                  break;
+                } else if (evaluation.status === 'counter_offer') {
+                  currentProposedPrice = evaluation.negotiatedPrice;
+                  currentProposedDateTime = evaluation.negotiatedDateTime;
+                  if (turn === maxTurns) {
+                    // Final decision by Customer Agent
+                    await pushAndBroadcastTrace('CustomerNegotiatorAgent', 'running', 'Negotiator evaluating final counter-offer...');
+                    const finalDecision = await customerNegotiator.generateOffer(
+                      deepSanitize(customerProposal),
+                      deepSanitize(negotiationHistory),
+                      deepSanitize(lastSupplierOffer),
+                      turn + 1,
+                      maxTurns
+                    );
+                    await pushAndBroadcastTrace('CustomerNegotiatorAgent', 'done', 'Negotiator evaluated final counter-offer...', finalDecision.reasoning);
+
+                    if (finalDecision.status === 'rejected') {
+                      currentStatus = 'rejected';
+                    } else {
+                      currentStatus = 'accepted'; // Force agreement on last turn to avoid hanging if they didn't reject
+                      negotiationTraces.push(`[Negotiation] Customer Agent accepted counter-offer of Rs. ${currentProposedPrice}`);
+                    }
+                    break;
+                  }
+                } else {
+                  currentStatus = 'rejected';
+                  break;
+                }
+              }
+
               // Update match details for the response card
-              matchResult.bestMatch.pricePerHour = quote.total;
-              matchResult.bestMatch.negotiatedDateTime = parsed.dateTime || 'Tomorrow, 10:00 AM';
-              matchResult.bestMatch.negotiatedStatus = 'accepted';
+              matchResult.bestMatch.pricePerHour = currentProposedPrice;
+              matchResult.bestMatch.negotiatedDateTime = currentProposedDateTime;
+              matchResult.bestMatch.negotiatedStatus = currentStatus;
+              matchResult.bestMatch.negotiationTraces = negotiationTraces;
 
               userMemory.lastProviderId = matchResult.bestMatch.id;
               userMemory.lastMatch = matchResult.bestMatch;
@@ -1223,6 +1334,12 @@ app.post('/api/chat', async (req, res) => {
 
     chatMemory.set(userId, userMemory);
 
+    if (userId && userId !== 'guest' && !userId.startsWith('test-user-')) {
+      memoryAgent.learnFinancialPreferences(userId).catch(err => {
+        console.warn(`[MemoryAgent Background] Failed for user ${userId}:`, err.message);
+      });
+    }
+
     res.json({
       workplan: ["Analyze", "Search", "Match", "Respond"],
       reply: finalReply,
@@ -1530,12 +1647,14 @@ app.post('/api/bookings/:id/provider-cancel', async (req, res) => {
     // 1. Resolve user location and details
     let userAddress = 'Islamabad';
     let userName = 'Guest User';
+    let financialPreferences: any = null;
     try {
       const userSnap = await retryDb(() => getDoc(doc(db, 'users', userId)));
       if (userSnap.exists()) {
         const userData = userSnap.data();
         userAddress = userData.address || 'Islamabad';
         userName = userData.name || 'Guest User';
+        financialPreferences = userData.financialPreferences || null;
       }
     } catch (err: any) {
       console.warn(`[Recovery Flow] Failed to fetch user profile:`, err.message);
@@ -1596,7 +1715,8 @@ app.post('/api/bookings/:id/provider-cancel', async (req, res) => {
           deepSanitize(`Mujhe ${category} chahiye ${userAddress} me`),
           deepSanitize(category),
           deepSanitize(userAddress),
-          serviceId // exclude the cancelled provider
+          serviceId, // exclude the cancelled provider
+          financialPreferences
         );
       } catch (matchErr: any) {
         console.error(`[Recovery Flow] Matchmaking error:`, matchErr.message);
@@ -2039,11 +2159,22 @@ app.post('/api/bookings/:bookingId/dispute-response', async (req, res) => {
       let backupPrice = 0;
 
       try {
+        let financialPreferences: any = null;
+        try {
+          const userSnap = await retryDb(() => getDoc(doc(db, 'users', userId)));
+          if (userSnap.exists()) {
+            financialPreferences = userSnap.data().financialPreferences || null;
+          }
+        } catch (prefsErr: any) {
+          console.warn(`[Dispute Response] Failed to load preferences:`, prefsErr.message);
+        }
+
         const matchResult = await matchmaker.findMatch(
           `plumber AC Electrician repair`,
           bookingData.category || 'General',
           bookingData.location || 'Islamabad',
-          serviceId || undefined
+          serviceId || undefined,
+          financialPreferences
         );
 
         if (matchResult?.bestMatch) {

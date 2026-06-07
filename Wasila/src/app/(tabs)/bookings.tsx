@@ -90,12 +90,12 @@ export default function BookingsScreen() {
   const [userRatingScore, setUserRatingScore] = React.useState(5);
   const [dismissedBookingIds, setDismissedBookingIds] = React.useState<string[]>([]);
 
-  // Wallet State
   const [walletBalance, setWalletBalance] = React.useState(0);
   const [holdingBalance, setHoldingBalance] = React.useState(0);
   const [transactions, setTransactions] = React.useState<any[]>([]);
   const [walletModalVisible, setWalletModalVisible] = React.useState(false);
   const [depositing, setDepositing] = React.useState(false);
+  const [customDepositAmount, setCustomDepositAmount] = React.useState('');
 
   // Loading states for actions
   const [cancellingBookingId, setCancellingBookingId] = React.useState<string | null>(null);
@@ -957,6 +957,33 @@ export default function BookingsScreen() {
               <Typography variant="body" weight="bold" style={{ marginBottom: 10 }}>
                 Demo Deposit Simulator
               </Typography>
+              
+              <View style={styles.customDepositRow}>
+                <TextInput
+                  style={styles.customDepositInput}
+                  value={customDepositAmount}
+                  onChangeText={setCustomDepositAmount}
+                  placeholder="Enter custom amount (e.g. 1500)"
+                  keyboardType="numeric"
+                  editable={!depositing}
+                />
+                <TouchableOpacity 
+                  style={[styles.customDepositBtn, (!customDepositAmount.trim() || depositing) && { opacity: 0.6 }]}
+                  disabled={!customDepositAmount.trim() || depositing}
+                  onPress={() => {
+                    const amt = parseInt(customDepositAmount.trim(), 10);
+                    if (isNaN(amt) || amt <= 0) {
+                      Alert.alert("Invalid Amount", "Please enter a valid deposit amount.");
+                      return;
+                    }
+                    handleDepositSimulation(amt);
+                    setCustomDepositAmount('');
+                  }}
+                >
+                  <Typography variant="caption" weight="bold" color="inverse">Add Balance</Typography>
+                </TouchableOpacity>
+              </View>
+
               <View style={{ flexDirection: 'row', gap: 12 }}>
                 <TouchableOpacity 
                   style={[styles.depositBtn, depositing && { opacity: 0.7 }]} 
@@ -1235,6 +1262,31 @@ const styles = StyleSheet.create({
   },
   depositSection: {
     marginBottom: 24,
+  },
+  customDepositRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    gap: 8,
+  },
+  customDepositInput: {
+    flex: 2,
+    height: 44,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    color: '#0F172A',
+    backgroundColor: '#F8FAFC',
+  },
+  customDepositBtn: {
+    flex: 1,
+    height: 44,
+    backgroundColor: THEME.colors.primary,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   depositBtnRow: {
     flexDirection: 'row',

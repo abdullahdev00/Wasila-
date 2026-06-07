@@ -54,12 +54,14 @@ export async function createBooking(userId: string, serviceDocId: string, detail
   // 1. Fetch customer details
   let userName = 'Guest User';
   let userPhotoURL = '';
+  let walletBalance = 0;
   try {
     const userSnap = await getDoc(doc(db, 'users', userId));
     if (userSnap.exists()) {
       const userData = userSnap.data();
       userName = userData.name || 'Guest User';
       userPhotoURL = userData.photoURL || '';
+      walletBalance = userData.walletBalance !== undefined ? userData.walletBalance : 0;
     }
   } catch (err) {
     console.warn(`[createBooking] Failed to fetch customer details for UID: ${userId}`, err);
@@ -90,6 +92,19 @@ export async function createBooking(userId: string, serviceDocId: string, detail
 
   // Use custom price if provided (e.g. from negotiation)
   const finalPrice = (details?.price !== undefined && details?.price !== null) ? details.price : price;
+
+  // Wallet Balance guardrail
+  if (walletBalance < finalPrice) {
+    throw new Error(`Insufficient wallet balance. Available: Rs. ${walletBalance}, Required: Rs. ${finalPrice}`);
+  }
+
+  // Time Slot Collision guardrail
+  const proposedDate = details?.date || 'Tomorrow, 10:00 AM';
+  const proposedTimestamp = parseBookingDateToTimestamp(proposedDate);
+  const isAvailable = await checkProviderAvailability(providerId, proposedTimestamp);
+  if (!isAvailable) {
+    throw new Error(`Provider (${providerName}) is already booked/busy around this timeslot (${proposedDate}). Baraye meherbani koi doosra time ya date suggest karein.`);
+  }
 
   const newBooking = {
     userId,
@@ -306,6 +321,10 @@ export async function holdBookingPayment(
       walletBalance = data.walletBalance !== undefined ? data.walletBalance : 0;
       holdingBalance = data.holdingBalance !== undefined ? data.holdingBalance : 0;
       userName = data.name || userName;
+    }
+
+    if (walletBalance < price) {
+      throw new Error(`Insufficient wallet balance for payment hold: Available Rs. ${walletBalance}, Required Rs. ${price}`);
     }
 
     const newWalletBalance = walletBalance - price;
@@ -575,6 +594,39 @@ export async function createDispute(
   await addDoc(disputesCol, newDispute);
   console.log(`[Dispute Logged] Created dispute record ${disputeId} for booking ${bookingId}`);
   return disputeId;
+}
+
+export async function checkProviderAvailability(providerId: string, targetTimestamp: number): Promise<boolean> {
+  if (targetTimestamp <= 0) return true; // Invalid time, bypass
+  const clashingWindowMs = 60 * 60 * 1000; // 1 Hour window
+  
+  const bookingsCol = collection(db, 'bookings');
+  const q = query(
+    bookingsCol, 
+    where('providerId', '==', providerId),
+    where('status', 'in', ['pending', 'accepted', 'arrived', 'completed'])
+  );
+  
+  try {
+    const snap = await getDocs(q);
+    let isAvailable = true;
+
+    snap.forEach(docSnap => {
+      const booking = docSnap.data();
+      const existingTime = booking.scheduledTimestamp;
+      if (existingTime) {
+        const diff = Math.abs(existingTime - targetTimestamp);
+        if (diff < clashingWindowMs) {
+          isAvailable = false;
+        }
+      }
+    });
+
+    return isAvailable;
+  } catch (err) {
+    console.warn(`[Availability Check] Error checking bookings for provider ${providerId}:`, err);
+    return true; // Default fallback to allow booking on query failure
+  }
 }
 
 

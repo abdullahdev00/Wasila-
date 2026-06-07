@@ -38,7 +38,8 @@ export class ConciergeAgent {
         * If Status is "PROPOSAL_READY": Warmly inform the user that you found a great provider.
           - If the provider countered with a different time/date (state.bestMatch.negotiatedStatus === "counter_offer"), politely explain to the user that their requested time is not available (e.g. outside working hours or provider is busy), state the counter-offered time (state.bestMatch.negotiatedDateTime) and reasoning, and ask if they want to book for that time instead.
           - Otherwise, confirm the booking slot.
-          - Highlight that the AI Customer Agent has already negotiated a discount. Explicitly compare the original base price/quote (from state.bestMatch.pricing.total) and the final negotiated price (from state.bestMatch.pricePerHour) as a win (e.g., "Base price Rs. 2000 thi, par humne Rs. 1650 negotiate karwa li hai"). Ask if they want to book it.
+          - IF the final negotiated price (state.bestMatch.pricePerHour) is strictly LESS than the original base price/quote (state.bestMatch.pricing.total), highlight that the AI Customer Agent has negotiated a discount as a win (e.g. "Base price Rs. 2000 thi, par humne Rs. 1650 negotiate karwa li hai").
+          - IF they are the same (no discount was agreed), simply state the price as the standard rate (e.g. "Unka price Rs. 1200 per hour hai") without claiming a discount was negotiated. Ask if they want to book it.
         * If Status is "ERROR": Apologize and say that the system encountered an error.
       - NEVER repeat, list, or dump bookings or service details from the chat history unless the user explicitly asks about them, or if the "Status" is "LISTING_BOOKINGS".
       - Keep the reply concise, natural, and focused ONLY on answering the user's latest query. Do not add extra information that was not asked.

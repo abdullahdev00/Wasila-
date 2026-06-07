@@ -14,6 +14,12 @@ export interface UserProfile {
   latitude?: number;
   longitude?: number;
   isAvailable?: boolean;
+  financialPreferences?: {
+    budgetTier: 'budget' | 'medium' | 'premium';
+    typicalSpend?: number;
+    summary?: string;
+    updatedAt?: string;
+  };
 }
 
 interface AuthState {
