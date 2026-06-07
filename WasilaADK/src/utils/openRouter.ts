@@ -101,3 +101,98 @@ export async function callOpenRouter(
 
   throw new Error("All free and fallback models in the OpenRouter pipeline failed.");
 }
+
+export async function callOpenRouterMultimodal(
+  systemInstruction: string,
+  userPrompt: string,
+  imageUrls: string[],
+  options: { isJson?: boolean; model?: string } = {}
+): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is not defined in the environment variables.");
+  }
+
+  const modelPipeline = [
+    "google/gemini-2.5-flash",
+    "openrouter/auto"
+  ];
+
+  if (options.model) {
+    modelPipeline.unshift(options.model);
+  }
+
+  const endpoint = "https://openrouter.ai/api/v1/chat/completions";
+  const contentArray: any[] = [
+    { type: "text", text: userPrompt }
+  ];
+
+  for (const url of imageUrls) {
+    if (url && url.startsWith('http')) {
+      contentArray.push({
+        type: "image_url",
+        image_url: {
+          url: url
+        }
+      });
+    }
+  }
+
+  for (const modelName of modelPipeline) {
+    console.log(`[OpenRouter Multimodal] Attempting inference with model: '${modelName}'...`);
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const responsePromise = axios.post(
+          endpoint,
+          {
+            model: modelName,
+            messages: [
+              { role: "system", content: systemInstruction },
+              { role: "user", content: contentArray }
+            ],
+            response_format: options.isJson ? { type: "json_object" } : undefined,
+            temperature: 0.1,
+            max_tokens: 600
+          },
+          {
+            headers: {
+              "Authorization": `Bearer ${apiKey}`,
+              "Content-Type": "application/json",
+              "HTTP-Referer": "https://wasila.ai",
+              "X-Title": "Wasila ADK"
+            },
+            validateStatus: () => true
+          }
+        );
+
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Request timed out after 15s")), 15000)
+        );
+
+        const response = await Promise.race([responsePromise, timeoutPromise]);
+
+        if (response.status === 200) {
+          const reply = response.data?.choices?.[0]?.message?.content;
+          if (reply) {
+            console.log(`[OpenRouter Multimodal] Success using model: '${modelName}'`);
+            return reply;
+          }
+        }
+
+        if (response.status === 429 || response.status >= 500) {
+          console.warn(`[OpenRouter Multimodal] Model '${modelName}' returned status ${response.status}. Attempt ${attempt}/2. Retrying in 3s...`);
+          await sleep(3000);
+          continue;
+        }
+
+        console.warn(`[OpenRouter Multimodal] Model '${modelName}' failed with status ${response.status}: ${JSON.stringify(response.data)}`);
+        break;
+      } catch (error: any) {
+        console.warn(`[OpenRouter Multimodal] Network/Inference error with model '${modelName}': ${error.message}`);
+        break;
+      }
+    }
+  }
+
+  throw new Error("All multimodal models in the OpenRouter pipeline failed.");
+}

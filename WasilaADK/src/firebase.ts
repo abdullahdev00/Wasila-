@@ -551,7 +551,9 @@ export async function createDispute(
   resolutionAction: 'refund_full' | 'refund_difference' | 'refund_compensation' | 'logged_complaint' | 'rejected' | 'pending_provider_response',
   refundAmount: number,
   verdictSummary: string,
-  customStatus?: 'pending' | 'resolved' | 'rejected' | 'pending_provider_response'
+  customStatus?: 'pending' | 'resolved' | 'rejected' | 'pending_provider_response',
+  beforeImage?: string,
+  afterImage?: string
 ): Promise<string> {
   const disputesCol = collection(db, 'disputes');
   
@@ -588,6 +590,8 @@ export async function createDispute(
     resolutionAction,
     refundAmount,
     verdictSummary,
+    beforeImage: beforeImage || '',
+    afterImage: afterImage || '',
     timestamp: new Date().toISOString()
   };
 

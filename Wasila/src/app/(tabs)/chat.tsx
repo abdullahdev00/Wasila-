@@ -15,8 +15,10 @@ import {
   ScrollView,
   Linking
 } from 'react-native';
-import { db } from '../../lib/firebase';
+import { db, storage } from '../../lib/firebase';
 import { doc, getDoc, collection, addDoc, query, where, onSnapshot, updateDoc, arrayUnion } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -50,6 +52,7 @@ type Message = {
   id: string;
   sender: 'user' | 'ai' | 'provider';
   text: string;
+  imageUrl?: string;
   traces?: Trace[];
   bestMatch?: ProviderMatch;
   workplan?: string[];
@@ -252,9 +255,18 @@ const MessageBubble = ({ item }: { item: Message }) => {
       )}
 
       <View style={[styles.bubble, isUser ? styles.userBubble : styles.aiBubble, item.isError && styles.errorBubble]}>
-        <Typography variant="body" style={{ color: isUser ? '#FFFFFF' : '#1E293B' }}>
-          {renderFormattedText(item.text)}
-        </Typography>
+        {item.imageUrl && (
+          <Image 
+            source={{ uri: item.imageUrl }} 
+            style={{ width: 200, height: 150, borderRadius: 8, marginBottom: item.text ? 8 : 0 }} 
+            resizeMode="cover"
+          />
+        )}
+        {item.text ? (
+          <Typography variant="body" style={{ color: isUser ? '#FFFFFF' : '#1E293B' }}>
+            {renderFormattedText(item.text)}
+          </Typography>
+        ) : null}
       </View>
 
       {!isUser && item.bestMatch && (
@@ -511,9 +523,123 @@ export default function ChatScreen() {
   const [providerChats, setProviderChats] = useState<any[]>([]);
   const [loadingChats, setLoadingChats] = useState(false);
   const [selectedChat, setSelectedChat] = useState<any | null>(null);
+  const [chatImageUploading, setChatImageUploading] = useState(false);
 
   const activeChatDoc = userChats.find(c => c.id === currentSessionId);
   const isDirectChatActive = activeChatDoc ? activeChatDoc.directChatActive === true : false;
+
+  const uploadChatImage = async (uri: string) => {
+    const blob: Blob = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.onload = () => resolve(xhr.response);
+      xhr.onerror = (e) => reject(new TypeError("Network request failed"));
+      xhr.responseType = "blob";
+      xhr.open("GET", uri, true);
+      xhr.send(null);
+    });
+    const uniqueId = Math.random().toString(36).substring(7);
+    const storageRef = ref(storage, `chat_images/${currentSessionId || selectedChat?.id || 'general'}_${uniqueId}`);
+    await uploadBytes(storageRef, blob, { contentType: 'image/jpeg' });
+    return await getDownloadURL(storageRef);
+  };
+
+  const sendImageMessage = async (imageUrl: string) => {
+    const isProvider = user?.role === 'provider';
+    const senderRole = isProvider ? 'provider' : 'user';
+    const msgId = Date.now().toString();
+
+    if (selectedChat) {
+      try {
+        const chatDocRef = doc(db, 'chats', selectedChat.id);
+        const newMsg = {
+          id: msgId,
+          sender: senderRole,
+          text: '',
+          imageUrl: imageUrl,
+          timestamp: new Date().toISOString()
+        };
+        await updateDoc(chatDocRef, {
+          messages: arrayUnion(newMsg),
+          lastMessage: "Sent an image",
+          updatedAt: new Date().toISOString()
+        });
+      } catch (err: any) {
+        console.error("Error sending image in direct chat:", err);
+        Alert.alert("Error", "Image send nahi ho saki: " + err.message);
+      }
+    } else {
+      const userMsg: Message = { 
+        id: msgId, 
+        sender: 'user', 
+        text: '', 
+        imageUrl: imageUrl 
+      };
+      setMessages(prev => [...prev, userMsg]);
+      setIsLoading(true);
+      
+      const sessionIdToUse = currentSessionId || `chat_${user?.uid || 'guest'}_${Date.now()}`;
+      if (!currentSessionId) {
+        setCurrentSessionId(sessionIdToUse);
+      }
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            message: "Uploaded image: " + imageUrl,
+            imageUrl: imageUrl,
+            userId: user?.uid || 'guest',
+            userName: user?.name || '',
+            sessionId: sessionIdToUse,
+            location: user?.address || user?.city || '',
+            latitude: user?.latitude || null,
+            longitude: user?.longitude || null
+          })
+        });
+        const data = await response.json();
+        const aiMsg: Message = {
+          id: (Date.now() + 1).toString(),
+          sender: 'ai',
+          text: data.reply || 'Images audit context me check kar li hai.',
+          traces: data.traces,
+          bestMatch: data.bestMatch,
+          workplan: data.workplan,
+          bookingConfirmed: data.bookingConfirmed,
+        };
+        setMessages(prev => [...prev, aiMsg]);
+      } catch (error: any) {
+        console.error("Error sending image to concierge:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  };
+
+  const handleChatImagePick = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Denied', 'We need access to your photos to send images.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: 'images',
+      allowsEditing: true,
+      quality: 0.6,
+    });
+    if (!result.canceled && result.assets[0].uri) {
+      setChatImageUploading(true);
+      try {
+        const url = await uploadChatImage(result.assets[0].uri);
+        await sendImageMessage(url);
+      } catch (err: any) {
+        console.error("Image pick & send error:", err);
+        Alert.alert('Error', 'Image upload/send failed: ' + err.message);
+      } finally {
+        setChatImageUploading(false);
+      }
+    }
+  };
 
   const handleExitDirectChat = async () => {
     if (!currentSessionId) return;
@@ -951,6 +1077,25 @@ export default function ChatScreen() {
                   showsVerticalScrollIndicator={false}
                 />
                 <View style={styles.inputContainer}>
+                  <TouchableOpacity 
+                    style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: 20,
+                      backgroundColor: '#F1F5F9',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      marginRight: 8
+                    }}
+                    onPress={handleChatImagePick}
+                    disabled={chatImageUploading}
+                  >
+                    {chatImageUploading ? (
+                      <ActivityIndicator size="small" color="#4F46E5" />
+                    ) : (
+                      <Ionicons name="camera-outline" size={20} color="#4F46E5" />
+                    )}
+                  </TouchableOpacity>
                   <TextInput
                     style={styles.input}
                     placeholder="Type your message..."
@@ -1005,6 +1150,25 @@ export default function ChatScreen() {
           />
 
           <View style={styles.inputContainer}>
+            <TouchableOpacity 
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 20,
+                backgroundColor: '#F1F5F9',
+                justifyContent: 'center',
+                alignItems: 'center',
+                marginRight: 8
+              }}
+              onPress={handleChatImagePick}
+              disabled={chatImageUploading || isLoading}
+            >
+              {chatImageUploading ? (
+                <ActivityIndicator size="small" color="#4F46E5" />
+              ) : (
+                <Ionicons name="camera-outline" size={20} color="#4F46E5" />
+              )}
+            </TouchableOpacity>
             <TextInput
               style={styles.input}
               placeholder="How can I help you?"

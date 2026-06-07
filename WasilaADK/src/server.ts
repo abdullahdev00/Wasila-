@@ -115,6 +115,7 @@ app.post('/api/chat', async (req, res) => {
     let userLongitude = clientLongitude || null;
 
     let financialPreferences: any = null;
+    let blacklistedProviders: string[] = [];
     if (userId && userId !== 'guest' && !userId.startsWith('test-user-')) {
       try {
         const userSnap = await getDoc(doc(db, 'users', userId));
@@ -130,8 +131,9 @@ app.post('/api/chat', async (req, res) => {
           if (userLongitude === null || userLongitude === undefined) {
             userLongitude = uData.longitude || null;
           }
-          financialPreferences = uData.financialPreferences || null;
-          console.log(`[User Profile] Resolved UID '${userId}' to Name: '${userName}', Address: '${userAddress || 'None'}', Lat: ${userLatitude}, Lng: ${userLongitude}, FinancialPref:`, financialPreferences);
+           financialPreferences = uData.financialPreferences || null;
+          blacklistedProviders = uData.blacklistedProviders || [];
+          console.log(`[User Profile] Resolved UID '${userId}' to Name: '${userName}', Address: '${userAddress || 'None'}', Lat: ${userLatitude}, Lng: ${userLongitude}, FinancialPref:`, financialPreferences, `Blacklist:`, blacklistedProviders);
         }
       } catch (err) {
         console.warn(`[User Profile] Failed to fetch user profile for UID: ${userId}`, err);
@@ -312,7 +314,7 @@ app.post('/api/chat', async (req, res) => {
 
     const callMatchmaker = async (msg: string, category: string, location: string) => {
       await pushAndBroadcastTrace('MatchmakerAgent', 'running', 'Scanning active service providers...');
-      const result = await matchmaker.findMatch(deepSanitize(msg), deepSanitize(category), deepSanitize(location), undefined, financialPreferences);
+      const result = await matchmaker.findMatch(deepSanitize(msg), deepSanitize(category), deepSanitize(location), undefined, financialPreferences, blacklistedProviders);
       // reasoning comes directly from LLM inside MatchmakerAgent — fully dynamic
       const matchThinking = result.reasoning
         ? `${result.reasoning}${result.bestMatch ? ` → Selected: ${result.bestMatch.name || result.bestMatch.providerName} (Rating: ${result.bestMatch.rating})` : ' → No match found'}`
@@ -1648,6 +1650,7 @@ app.post('/api/bookings/:id/provider-cancel', async (req, res) => {
     let userAddress = 'Islamabad';
     let userName = 'Guest User';
     let financialPreferences: any = null;
+    let blacklistedProviders: string[] = [];
     try {
       const userSnap = await retryDb(() => getDoc(doc(db, 'users', userId)));
       if (userSnap.exists()) {
@@ -1655,6 +1658,7 @@ app.post('/api/bookings/:id/provider-cancel', async (req, res) => {
         userAddress = userData.address || 'Islamabad';
         userName = userData.name || 'Guest User';
         financialPreferences = userData.financialPreferences || null;
+        blacklistedProviders = userData.blacklistedProviders || [];
       }
     } catch (err: any) {
       console.warn(`[Recovery Flow] Failed to fetch user profile:`, err.message);
@@ -1716,7 +1720,8 @@ app.post('/api/bookings/:id/provider-cancel', async (req, res) => {
           deepSanitize(category),
           deepSanitize(userAddress),
           serviceId, // exclude the cancelled provider
-          financialPreferences
+          financialPreferences,
+          blacklistedProviders
         );
       } catch (matchErr: any) {
         console.error(`[Recovery Flow] Matchmaking error:`, matchErr.message);
@@ -2160,10 +2165,12 @@ app.post('/api/bookings/:bookingId/dispute-response', async (req, res) => {
 
       try {
         let financialPreferences: any = null;
+        let blacklistedProviders: string[] = [];
         try {
           const userSnap = await retryDb(() => getDoc(doc(db, 'users', userId)));
           if (userSnap.exists()) {
             financialPreferences = userSnap.data().financialPreferences || null;
+            blacklistedProviders = userSnap.data().blacklistedProviders || [];
           }
         } catch (prefsErr: any) {
           console.warn(`[Dispute Response] Failed to load preferences:`, prefsErr.message);
@@ -2174,7 +2181,8 @@ app.post('/api/bookings/:bookingId/dispute-response', async (req, res) => {
           bookingData.category || 'General',
           bookingData.location || 'Islamabad',
           serviceId || undefined,
-          financialPreferences
+          financialPreferences,
+          blacklistedProviders
         );
 
         if (matchResult?.bestMatch) {
@@ -2274,7 +2282,7 @@ app.post('/api/bookings/:bookingId/dispute-response', async (req, res) => {
 
 app.post('/api/disputes', async (req, res) => {
   try {
-    const { bookingId, issueType, details } = req.body;
+    const { bookingId, issueType, details, beforeImage, afterImage } = req.body;
 
     if (!bookingId || !issueType || !details) {
       return res.status(400).json({ error: "Missing required dispute fields (bookingId, issueType, details)" });
@@ -2331,7 +2339,9 @@ app.post('/api/disputes', async (req, res) => {
         'pending_provider_response',
         0,
         "Shikayat darj kar li gayi hai. Hum provider se confirm kar rahe hain ke wo aa rahe hain ya nahi.",
-        'pending_provider_response'
+        'pending_provider_response',
+        beforeImage,
+        afterImage
       );
 
       // C. Create a notification for the provider to alert them in their dashboard
@@ -2363,9 +2373,57 @@ app.post('/api/disputes', async (req, res) => {
     const decision = await disputeAgent.evaluateDispute(issueType, details, {
       id: bookingSnap.id,
       ...bookingData
-    });
+    }, beforeImage, afterImage);
 
     console.log(`[Dispute Agent Decision]:`, decision);
+
+    // Intercept poor quality dispute if Gemini confirms poor quality
+    if (decision.isValid && issueType === 'poor_quality') {
+      console.log(`[Dispute Endpoint] Intercepting poor_quality dispute. Triggering provider response verification loop...`);
+
+      // A. Update booking status to disputed_poor_quality
+      await retryDb(() => updateDoc(bookingRef, {
+        status: 'disputed_poor_quality',
+        disputedAt: Date.now()
+      }));
+
+      // B. Create a pending dispute document in Firestore `/disputes`
+      await createDispute(
+        bookingId,
+        issueType,
+        details,
+        'pending_provider_response',
+        decision.refundAmount,
+        decision.verdictSummary,
+        'pending_provider_response',
+        beforeImage,
+        afterImage
+      );
+
+      // C. Notify the provider in their notifications
+      const providerUserId = bookingData.providerId;
+      if (providerUserId) {
+        const notifCol = collection(db, 'notifications');
+        await retryDb(() => addDoc(notifCol, {
+          userId: providerUserId,
+          title: "Poor Quality Work Reported",
+          message: `Customer ne report kiya hai ke aapke kaam ki quality kharab hai. Gemini ne complaint verify ki hai: "${decision.verdictSummary}". Kya aap dobara ja kar kaam theek karenge ya explanation denge?`,
+          type: 'poor_quality_alert',
+          bookingId: bookingId,
+          timestamp: new Date().toISOString(),
+          read: false
+        }));
+      }
+
+      return res.json({
+        success: true,
+        isValid: true,
+        pendingProviderResponse: true,
+        verdict: `Kaam ki quality ka issue verify ho gaya hai: "${decision.verdictSummary}". Humne provider ko notify kar diya hai. Un ka response aate hi aap ko update kiya jayega.`,
+        refundAmount: 0,
+        action: "pending_provider_response"
+      });
+    }
 
     if (decision.isValid) {
       // Execute Resolution Actions
@@ -2509,7 +2567,10 @@ app.post('/api/disputes', async (req, res) => {
         details,
         decision.action,
         decision.refundAmount,
-        decision.verdictSummary
+        decision.verdictSummary,
+        undefined,
+        beforeImage,
+        afterImage
       );
 
       return res.json({
@@ -2528,7 +2589,10 @@ app.post('/api/disputes', async (req, res) => {
         details,
         'rejected',
         0,
-        decision.verdictSummary
+        decision.verdictSummary,
+        'rejected',
+        beforeImage,
+        afterImage
       );
 
       return res.json({
@@ -2543,6 +2607,253 @@ app.post('/api/disputes', async (req, res) => {
   } catch (error: any) {
     console.error("[Dispute API Route Error]:", error.message);
     res.status(500).json({ error: `Failed to evaluate dispute: ${error.message}` });
+  }
+});
+
+app.post('/api/bookings/:bookingId/poor-quality-response', async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const { response, explanation } = req.body;
+
+    console.log(`\n[Poor Quality Response] Booking: ${bookingId} | Response: ${response}`);
+
+    const bookingRef = doc(db, 'bookings', bookingId);
+    const bookingSnap = await retryDb(() => getDoc(bookingRef));
+
+    if (!bookingSnap.exists()) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+
+    const bookingData = bookingSnap.data();
+    const userId = bookingData.userId;
+
+    const disputesCol = collection(db, 'disputes');
+    const disputesSnap = await retryDb(() => getDocs(query(disputesCol, where('bookingId', '==', bookingId))));
+    let disputeDocRef = null;
+    if (!disputesSnap.empty) {
+      const firstDispute = disputesSnap.docs[0];
+      disputeDocRef = doc(db, 'disputes', firstDispute.id);
+    }
+
+    if (response === 'rectify') {
+      await retryDb(() => updateDoc(bookingRef, {
+        status: 'provider_rectifying',
+        poorQualityAction: 'rectify'
+      }));
+
+      if (disputeDocRef) {
+        await retryDb(() => updateDoc(disputeDocRef, {
+          status: 'pending_customer_resolution',
+          providerResponse: {
+            action: 'rectify',
+            timestamp: new Date().toISOString()
+          }
+        }));
+      }
+
+      const notifCol = collection(db, 'notifications');
+      await retryDb(() => addDoc(notifCol, {
+        userId: userId,
+        title: "Provider Resolving Issue",
+        message: `${bookingData.providerName || 'Provider'} ne confirm kiya hai ke wo aa rahe hain aur poor quality issue ko fix karenge.`,
+        type: 'quality_rectify',
+        bookingId: bookingId,
+        timestamp: new Date().toISOString(),
+        read: false
+      }));
+
+      return res.json({
+        success: true,
+        message: "Status updated to rectifying. Customer notified."
+      });
+
+    } else if (response === 'explain') {
+      if (!explanation || explanation.trim() === '') {
+        return res.status(400).json({ error: "Explanation text is required for explain action" });
+      }
+
+      await retryDb(() => updateDoc(bookingRef, {
+        status: 'provider_explained',
+        poorQualityAction: 'explain',
+        providerExplanation: explanation
+      }));
+
+      if (disputeDocRef) {
+        await retryDb(() => updateDoc(disputeDocRef, {
+          status: 'pending_customer_resolution',
+          providerResponse: {
+            action: 'explain',
+            explanationText: explanation,
+            timestamp: new Date().toISOString()
+          }
+        }));
+      }
+
+      const notifCol = collection(db, 'notifications');
+      await retryDb(() => addDoc(notifCol, {
+        userId: userId,
+        title: "Provider Quality Wazahat",
+        message: `${bookingData.providerName || 'Provider'} ne quality issue par ye wazahat di hai: "${explanation}". Kya aap is se satisfied hain?`,
+        type: 'quality_explain',
+        bookingId: bookingId,
+        timestamp: new Date().toISOString(),
+        read: false
+      }));
+
+      return res.json({
+        success: true,
+        message: "Explanation saved. Customer notified."
+      });
+    }
+
+    return res.status(400).json({ error: "Invalid response option (must be rectify or explain)" });
+
+  } catch (error: any) {
+    console.error("[Poor Quality Response Route Error]:", error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/bookings/:bookingId/poor-quality-resolve', async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const { action } = req.body;
+
+    console.log(`\n[Poor Quality Resolve] Booking: ${bookingId} | Action: ${action}`);
+
+    const bookingRef = doc(db, 'bookings', bookingId);
+    const bookingSnap = await retryDb(() => getDoc(bookingRef));
+
+    if (!bookingSnap.exists()) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+
+    const bookingData = bookingSnap.data();
+    const serviceId = bookingData.serviceId;
+    const providerId = bookingData.providerId;
+    const userId = bookingData.userId;
+
+    const disputesCol = collection(db, 'disputes');
+    const disputesSnap = await retryDb(() => getDocs(query(disputesCol, where('bookingId', '==', bookingId))));
+    let disputeDocRef = null;
+    let refundAmount = bookingData.price || 0;
+    if (!disputesSnap.empty) {
+      const firstDispute = disputesSnap.docs[0];
+      disputeDocRef = doc(db, 'disputes', firstDispute.id);
+      refundAmount = firstDispute.data().refundAmount || refundAmount;
+    }
+
+    if (action === 'accept') {
+      await retryDb(() => updateDoc(bookingRef, {
+        status: 'completed',
+        paymentStatus: 'released',
+        poorQualityResolution: 'accepted'
+      }));
+
+      try {
+        const providerUserRef = doc(db, 'users', providerId);
+        const providerUserSnap = await getDoc(providerUserRef);
+        let providerWallet = 0;
+        if (providerUserSnap.exists()) {
+          providerWallet = providerUserSnap.data().walletBalance || 0;
+        }
+        await updateDoc(providerUserRef, {
+          walletBalance: providerWallet + refundAmount
+        });
+
+        const customerUserRef = doc(db, 'users', userId);
+        const customerUserSnap = await getDoc(customerUserRef);
+        let customerHolding = 0;
+        if (customerUserSnap.exists()) {
+          customerHolding = customerUserSnap.data().holdingBalance || 0;
+        }
+        await updateDoc(customerUserRef, {
+          holdingBalance: Math.max(0, customerHolding - refundAmount)
+        });
+      } catch (fundErr: any) {
+        console.warn(`[Quality Resolve] Money transfer failed:`, fundErr.message);
+      }
+
+      if (disputeDocRef) {
+        await retryDb(() => updateDoc(disputeDocRef, {
+          status: 'resolved',
+          customerSatisfaction: 'satisfied',
+          verdictSummary: "Customer satisfied. Issue resolved."
+        }));
+      }
+
+      return res.json({
+        success: true,
+        message: "Dispute closed as accepted. Booking marked completed."
+      });
+
+    } else if (action === 'unsatisfied') {
+      await retryDb(() => updateDoc(bookingRef, {
+        status: 'cancelled_by_dispute',
+        paymentStatus: 'refunded_full',
+        poorQualityResolution: 'unsatisfied'
+      }));
+
+      try {
+        await refundBookingPayment(
+          userId,
+          bookingId,
+          refundAmount,
+          serviceId || '',
+          bookingData.providerName || 'Professional'
+        );
+      } catch (escrowErr: any) {
+        console.warn(`[Quality Resolve] Refund failed for booking ${bookingId}:`, escrowErr.message);
+      }
+
+      if (serviceId) {
+        const serviceRef = doc(db, 'services', serviceId);
+        const serviceSnap = await retryDb(() => getDoc(serviceRef));
+        if (serviceSnap.exists()) {
+          const serviceData = serviceSnap.data();
+          const currentScore = serviceData.reliabilityScore !== undefined ? serviceData.reliabilityScore : 100;
+          await retryDb(() => updateDoc(serviceRef, {
+            reliabilityScore: Math.max(0, currentScore - 10)
+          }));
+          console.log(`[Quality Penalty] Deducted -10 reliability points from provider. New score: ${Math.max(0, currentScore - 10)}`);
+        }
+      }
+
+      try {
+        const userRef = doc(db, 'users', userId);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+          const userData = userSnap.data();
+          const blacklist = userData.blacklistedProviders || [];
+          if (!blacklist.includes(providerId)) {
+            blacklist.push(providerId);
+            await updateDoc(userRef, { blacklistedProviders: blacklist });
+            console.log(`[Quality Blacklist] Provider ${providerId} added to customer ${userId} blacklist.`);
+          }
+        }
+      } catch (blacklistErr: any) {
+        console.warn(`[Quality Resolve] Blacklist update failed:`, blacklistErr.message);
+      }
+
+      if (disputeDocRef) {
+        await retryDb(() => updateDoc(disputeDocRef, {
+          status: 'resolved',
+          customerSatisfaction: 'unsatisfied',
+          verdictSummary: "Customer unsatisfied. Provider reliability penalized (-10 points) and blacklisted."
+        }));
+      }
+
+      return res.json({
+        success: true,
+        message: "Dispute closed as unsatisfied. Provider penalized and blacklisted."
+      });
+    }
+
+    return res.status(400).json({ error: "Invalid action option (must be accept or unsatisfied)" });
+
+  } catch (error: any) {
+    console.error("[Poor Quality Resolve Route Error]:", error.message);
+    res.status(500).json({ error: error.message });
   }
 });
 

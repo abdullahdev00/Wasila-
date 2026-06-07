@@ -6,8 +6,10 @@ import { Card } from '../../components/ui/Card';
 import { THEME } from '../../theme';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useRouter } from 'expo-router';
-import { db } from '../../lib/firebase';
+import { db, storage } from '../../lib/firebase';
 import { collection, query, where, onSnapshot, updateDoc, doc, getDoc, addDoc } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import * as ImagePicker from 'expo-image-picker';
 import { API_BASE_URL } from '../../lib/apiConfig';
 
 const getCategoryConfig = (category: string) => {
@@ -108,6 +110,10 @@ export default function BookingsScreen() {
   const [disputeIssueType, setDisputeIssueType] = React.useState<'no_show' | 'overcharge' | 'late_arrival' | 'poor_quality'>('no_show');
   const [disputeDetails, setDisputeDetails] = React.useState('');
   const [disputeSubmitting, setDisputeSubmitting] = React.useState(false);
+  const [disputeBeforeImage, setDisputeBeforeImage] = React.useState('');
+  const [disputeAfterImage, setDisputeAfterImage] = React.useState('');
+  const [uploadingBefore, setUploadingBefore] = React.useState(false);
+  const [uploadingAfter, setUploadingAfter] = React.useState(false);
   
   // Dispute Verdict Modal State
   const [verdictModalVisible, setVerdictModalVisible] = React.useState(false);
@@ -413,7 +419,74 @@ export default function BookingsScreen() {
     setSelectedBookingToDispute(booking);
     setDisputeIssueType('no_show');
     setDisputeDetails('');
+    setDisputeBeforeImage('');
+    setDisputeAfterImage('');
+    setUploadingBefore(false);
+    setUploadingAfter(false);
     setDisputeModalVisible(true);
+  };
+
+  const uploadDisputeImage = async (uri: string, type: 'before' | 'after') => {
+    const blob: Blob = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.onload = () => resolve(xhr.response);
+      xhr.onerror = (e) => reject(new TypeError("Network request failed"));
+      xhr.responseType = "blob";
+      xhr.open("GET", uri, true);
+      xhr.send(null);
+    });
+    const uniqueId = Math.random().toString(36).substring(7);
+    const storageRef = ref(storage, `disputes/${selectedBookingToDispute?.id || 'unknown'}_${type}_${uniqueId}`);
+    await uploadBytes(storageRef, blob, { contentType: 'image/jpeg' });
+    return await getDownloadURL(storageRef);
+  };
+
+  const handlePickBeforeImage = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Denied', 'We need access to your photos to upload.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: 'images',
+      allowsEditing: true,
+      quality: 0.6,
+    });
+    if (!result.canceled && result.assets[0].uri) {
+      setUploadingBefore(true);
+      try {
+        const url = await uploadDisputeImage(result.assets[0].uri, 'before');
+        setDisputeBeforeImage(url);
+      } catch (err) {
+        Alert.alert('Upload Failed', 'Failed to upload before image.');
+      } finally {
+        setUploadingBefore(false);
+      }
+    }
+  };
+
+  const handlePickAfterImage = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Denied', 'We need access to your photos to upload.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: 'images',
+      allowsEditing: true,
+      quality: 0.6,
+    });
+    if (!result.canceled && result.assets[0].uri) {
+      setUploadingAfter(true);
+      try {
+        const url = await uploadDisputeImage(result.assets[0].uri, 'after');
+        setDisputeAfterImage(url);
+      } catch (err) {
+        Alert.alert('Upload Failed', 'Failed to upload after image.');
+      } finally {
+        setUploadingAfter(false);
+      }
+    }
   };
 
   const handleDisputeSubmit = async () => {
@@ -444,7 +517,9 @@ export default function BookingsScreen() {
         body: JSON.stringify({
           bookingId: selectedBookingToDispute.id,
           issueType: disputeIssueType,
-          details: disputeDetails
+          details: disputeDetails,
+          beforeImage: disputeBeforeImage || undefined,
+          afterImage: disputeAfterImage || undefined
         })
       });
 
@@ -801,22 +876,102 @@ export default function BookingsScreen() {
                 </Typography>
               </TouchableOpacity>
 
-              {/* Option 4: Poor Quality (Coming Soon) */}
+              {/* Option 4: Poor Quality */}
               <TouchableOpacity 
                 style={[
                   styles.issueOption, 
-                  styles.issueOptionDisabled
+                  disputeIssueType === 'poor_quality' && styles.issueOptionSelected
                 ]}
-                onPress={() => {
-                  Alert.alert("Notice", "Kaam kharab hone ki shikayat aglay chunk me active hogi. Abhi testing ke liye sirf 'Provider nahi aya' select karein.");
-                }}
+                onPress={() => setDisputeIssueType('poor_quality')}
               >
-                <Ionicons name="alert-circle-outline" size={20} color="#94A3B8" />
-                <Typography variant="body" style={{ marginLeft: 8, color: '#94A3B8' }}>
-                  Kaam kharab kiya (Poor Quality) - Jald Asy
+                <Ionicons name="alert-circle-outline" size={20} color={disputeIssueType === 'poor_quality' ? '#FFF' : '#EF4444'} />
+                <Typography 
+                  variant="body" 
+                  weight="medium" 
+                  style={{ marginLeft: 8, color: disputeIssueType === 'poor_quality' ? '#FFF' : '#1E293B' }}
+                >
+                  Kaam kharab kiya (Poor Quality)
                 </Typography>
               </TouchableOpacity>
             </View>
+
+            {/* Before / After Image Pickers if Poor Quality is selected */}
+            {disputeIssueType === 'poor_quality' && (
+              <View style={{ marginBottom: 16 }}>
+                <Typography variant="caption" weight="bold" style={{ marginBottom: 8, color: '#4F46E5' }}>TASVEEREN UPLOAD KAREIN (BEFORE & AFTER):</Typography>
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                  {/* Before Image Picker */}
+                  <TouchableOpacity 
+                    style={{
+                      flex: 1,
+                      height: 80,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: '#E2E8F0',
+                      borderStyle: 'dashed',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      backgroundColor: '#F8FAFC',
+                      position: 'relative',
+                      overflow: 'hidden'
+                    }}
+                    onPress={handlePickBeforeImage}
+                    disabled={uploadingBefore}
+                  >
+                    {uploadingBefore ? (
+                      <ActivityIndicator size="small" color="#4F46E5" />
+                    ) : disputeBeforeImage ? (
+                      <>
+                        <Image source={{ uri: disputeBeforeImage }} style={{ width: '100%', height: '100%' }} />
+                        <View style={{ position: 'absolute', top: 4, right: 4, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 10, padding: 2 }}>
+                          <Ionicons name="checkmark" size={12} color="#FFF" />
+                        </View>
+                      </>
+                    ) : (
+                      <>
+                        <Ionicons name="camera-outline" size={24} color="#64748B" />
+                        <Typography variant="caption" color="muted" style={{ marginTop: 4 }}>Before State</Typography>
+                      </>
+                    )}
+                  </TouchableOpacity>
+
+                  {/* After Image Picker */}
+                  <TouchableOpacity 
+                    style={{
+                      flex: 1,
+                      height: 80,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: '#E2E8F0',
+                      borderStyle: 'dashed',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      backgroundColor: '#F8FAFC',
+                      position: 'relative',
+                      overflow: 'hidden'
+                    }}
+                    onPress={handlePickAfterImage}
+                    disabled={uploadingAfter}
+                  >
+                    {uploadingAfter ? (
+                      <ActivityIndicator size="small" color="#4F46E5" />
+                    ) : disputeAfterImage ? (
+                      <>
+                        <Image source={{ uri: disputeAfterImage }} style={{ width: '100%', height: '100%' }} />
+                        <View style={{ position: 'absolute', top: 4, right: 4, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 10, padding: 2 }}>
+                          <Ionicons name="checkmark" size={12} color="#FFF" />
+                        </View>
+                      </>
+                    ) : (
+                      <>
+                        <Ionicons name="camera-outline" size={24} color="#64748B" />
+                        <Typography variant="caption" color="muted" style={{ marginTop: 4 }}>After State</Typography>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
 
             {/* Details Input */}
             <Typography variant="caption" weight="bold" style={{ marginBottom: 6, color: '#4F46E5' }}>TAFSEEL (DETAILS):</Typography>

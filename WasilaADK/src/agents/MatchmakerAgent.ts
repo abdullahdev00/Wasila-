@@ -4,7 +4,7 @@ import { fetchProvidersFromFirebase } from '../firebase';
  * Matchmaker Agent using OpenRouter & Direct Firebase Queries
  */
 export class MatchmakerAgent {
-  async findMatch(query: string, category: string, resolvedLocation: string = 'Islamabad', excludeId?: string, financialPreferences?: any) {
+  async findMatch(query: string, category: string, resolvedLocation: string = 'Islamabad', excludeId?: string, financialPreferences?: any, blacklistedProviders?: string[]) {
     try {
       if (!category) {
         return { bestMatch: null, reasoning: "No category provided." };
@@ -17,6 +17,10 @@ export class MatchmakerAgent {
       const filteredProviders = allProviders.filter((p: any) => {
         if (p.isBooked) return false;
         if (excludeId && p.id === excludeId) return false;
+        if (blacklistedProviders && blacklistedProviders.includes(p.id)) {
+          console.log(`[Matchmaker] Filtering out blacklisted provider: ${p.id}`);
+          return false;
+        }
         
         const dbCat = (p.category || '').toLowerCase();
         const dbName = (p.serviceName || p.name || '').toLowerCase();
