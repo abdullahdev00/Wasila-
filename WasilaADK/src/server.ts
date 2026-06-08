@@ -412,16 +412,9 @@ app.post('/api/chat', async (req, res) => {
           ? "براہِ مہربانی، اخلاقیات کا دھیان رکھیں اور غلط الفاظ کا استعمال نہ کریں۔"
           : "Bara-e-meharbani, ikhlaqiat ka dhyan rakhein aur ghalat alfaz ka istemal na karein.";
       } else if (reason === 'off_topic') {
-        const isPolitics = /imran|nawaz|pti|pmln|election|siasat/i.test(message || '');
-        if (isPolitics) {
-          reply = isUrduScript
-            ? "وسیلہ صرف پروفیشنل سروسز (AC Repair, Plumber, etc.) کے لیے ہے۔ میں اس موضوع پر بات نہیں کر سکتا۔"
-            : "Wasila sirf professional services (AC Repair, Plumber, etc.) ke liye hai. Main is topic par baat nahi kar sakta.";
-        } else {
-          reply = isUrduScript
-            ? "وسیلہ صرف پروفیشنل سروسز کے لیے ہے۔ میں غیر متعلقہ موضوعات پر بات نہیں کر سکتا۔"
-            : "Wasila sirf professional services ke liye hai. Main inappropriate ya off-topic subjects par baat nahi kar sakta.";
-        }
+        reply = isUrduScript
+          ? "وسیلہ صرف پروفیشنل سروسز (AC Repair, Plumber, etc.) کے لیے ہے۔ میں اس موضوع پر بات نہیں کر سکتا۔"
+          : "Wasila sirf professional services (AC Repair, Plumber, etc.) ke liye hai. Main is topic par baat nahi kar sakta.";
       } else {
         reply = isUrduScript
           ? "سسٹم سیکیورٹی ایکٹو ہے۔ آپ کا ایکشن بلاک کر دیا گیا ہے۔"
