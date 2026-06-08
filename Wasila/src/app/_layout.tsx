@@ -103,6 +103,10 @@ export default function RootLayout() {
               if (change.type === 'added') {
                 const data = change.doc.data();
                 if (data.timestamp && data.timestamp > appStartTime) {
+                  // Suppress native alerts for provider dispute notifications (handled by custom home screen modals)
+                  if (userRole === 'provider' && (data.type === 'poor_quality_alert' || data.type === 'no_show_alert')) {
+                    return;
+                  }
                   if (data.type === 'poor_quality_alert') {
                     Alert.alert(
                       "Poor Quality Work Reported",
