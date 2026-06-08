@@ -15,7 +15,7 @@ async function testOffTopicQueries() {
   for (const query of testQueries) {
     console.log(`\n💬 Testing query: "${query}"`);
     try {
-      const response = await axios.post('http://localhost:5000/api/chat', {
+      const response = await axios.post('https://wasila-backend-546907715054.us-central1.run.app/api/chat', {
         message: query,
         userId: 'test-user-guardrail',
         sessionId: 'test-session-guardrail-123'
