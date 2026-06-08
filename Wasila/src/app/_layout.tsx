@@ -17,6 +17,20 @@ export default function RootLayout() {
     let unsubscribeSnapshot: (() => void) | null = null;
     let unsubscribeNotifications: (() => void) | null = null;
     const appStartTime = new Date().toISOString();
+    const mockProviderUids = [
+      'AhmedRazaPlumber123',
+      'zSD9lp4TReUdoOehPpl0OR9I54l2',
+      'IrfanACMech789',
+      'SajidKhanElectrician456',
+      'ZeeshanAliTutor202',
+      'BilalHussainPlumber101',
+      'xWiyYEXPAmgUnEhNrqyxS9hEAcq2',
+      'NGrzLqRy0pD211OTn2Te',
+      'ZpjVtQHosL6q108Ucz71',
+      's1',
+      's2',
+      's3'
+    ];
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
       // Clean up previous snapshot listeners if exist
@@ -34,13 +48,15 @@ export default function RootLayout() {
         
         // Listen to the Firestore user profile in real-time
         unsubscribeSnapshot = onSnapshot(userDocRef, (docSnap) => {
+          let userRole = 'customer';
           if (docSnap.exists()) {
             const userData = docSnap.data();
+            userRole = userData.role || 'customer';
             setUser({
               uid: firebaseUser.uid,
               email: firebaseUser.email || '',
               name: userData.name || 'User',
-              role: userData.role || 'customer',
+              role: userRole as UserRole,
               photoURL: userData.photoURL,
               isAvailable: userData.isAvailable,
               phoneNumber: userData.phoneNumber || '',
@@ -66,93 +82,88 @@ export default function RootLayout() {
             setUser(newUser);
           }
           setLoading(false);
+
+          // Setup or refresh notification subscription based on user role
+          if (unsubscribeNotifications) {
+            unsubscribeNotifications();
+            unsubscribeNotifications = null;
+          }
+
+          const allowedUids = userRole === 'customer'
+            ? [firebaseUser.uid]
+            : [firebaseUser.uid, ...mockProviderUids];
+
+          const notifQuery = query(
+            collection(db, 'notifications'),
+            where('userId', 'in', allowedUids)
+          );
+
+          unsubscribeNotifications = onSnapshot(notifQuery, (snapshot) => {
+            snapshot.docChanges().forEach((change) => {
+              if (change.type === 'added') {
+                const data = change.doc.data();
+                if (data.timestamp && data.timestamp > appStartTime) {
+                  if (data.type === 'poor_quality_alert') {
+                    Alert.alert(
+                      "Poor Quality Work Reported",
+                      data.message,
+                      [
+                        {
+                          text: "Main Aa Raha Hoon",
+                          onPress: async () => {
+                            try {
+                              const res = await fetch(`${API_BASE_URL}/bookings/${data.bookingId}/poor-quality-response`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ response: 'rectify' })
+                              });
+                              const resData = await res.json();
+                              if (res.ok) {
+                                Alert.alert("Success", "Aap ka response send ho gaya hai. Customer ko notify kar diya gaya hai.");
+                              } else {
+                                Alert.alert("Error", resData.error || "Response send karne mein masla pesh aya.");
+                              }
+                            } catch (e: any) {
+                              Alert.alert("Error", e.message);
+                            }
+                          }
+                        },
+                        {
+                          text: "Main Nahi Aa Raha",
+                          style: "destructive",
+                          onPress: async () => {
+                            try {
+                              const res = await fetch(`${API_BASE_URL}/bookings/${data.bookingId}/poor-quality-response`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ response: 'decline' })
+                              });
+                              const resData = await res.json();
+                              if (res.ok) {
+                                Alert.alert("Response Sent", "Humne customer ko inform kar diya hai aur rating penalty apply kar di hai.");
+                              } else {
+                                Alert.alert("Error", resData.error || "Response send karne mein masla pesh aya.");
+                              }
+                            } catch (e: any) {
+                              Alert.alert("Error", e.message);
+                            }
+                          }
+                        }
+                      ],
+                      { cancelable: false }
+                    );
+                  } else {
+                    Alert.alert("Wasila Notification", data.message);
+                  }
+                }
+              }
+            });
+          }, (error) => {
+            console.error("Firestore notifications onSnapshot error:", error);
+          });
         }, (error) => {
           console.error("Firestore user onSnapshot error:", error);
           setLoading(false);
-        });
-
-        const mockProviderUids = [
-          'AhmedRazaPlumber123',
-          'zSD9lp4TReUdoOehPpl0OR9I54l2',
-          'IrfanACMech789',
-          'SajidKhanElectrician456',
-          'ZeeshanAliTutor202',
-          'BilalHussainPlumber101',
-          'xWiyYEXPAmgUnEhNrqyxS9hEAcq2',
-          'NGrzLqRy0pD211OTn2Te',
-          'ZpjVtQHosL6q108Ucz71',
-          's1',
-          's2',
-          's3'
-        ];
-
-        // Listen to the Firestore notifications in real-time for push alert simulation
-        const notifQuery = query(
-          collection(db, 'notifications'),
-          where('userId', 'in', [firebaseUser.uid, ...mockProviderUids])
-        );
-        unsubscribeNotifications = onSnapshot(notifQuery, (snapshot) => {
-          snapshot.docChanges().forEach((change) => {
-            if (change.type === 'added') {
-              const data = change.doc.data();
-              if (data.timestamp && data.timestamp > appStartTime) {
-                if (data.type === 'poor_quality_alert') {
-                  Alert.alert(
-                    "Poor Quality Work Reported",
-                    data.message,
-                    [
-                      {
-                        text: "Main Aa Raha Hoon",
-                        onPress: async () => {
-                          try {
-                            const res = await fetch(`${API_BASE_URL}/bookings/${data.bookingId}/poor-quality-response`, {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ response: 'rectify' })
-                            });
-                            const resData = await res.json();
-                            if (res.ok) {
-                              Alert.alert("Success", "Aap ka response send ho gaya hai. Customer ko notify kar diya gaya hai.");
-                            } else {
-                              Alert.alert("Error", resData.error || "Response send karne mein masla pesh aya.");
-                            }
-                          } catch (e: any) {
-                            Alert.alert("Error", e.message);
-                          }
-                        }
-                      },
-                      {
-                        text: "Main Nahi Aa Raha",
-                        style: "destructive",
-                        onPress: async () => {
-                          try {
-                            const res = await fetch(`${API_BASE_URL}/bookings/${data.bookingId}/poor-quality-response`, {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ response: 'decline' })
-                            });
-                            const resData = await res.json();
-                            if (res.ok) {
-                              Alert.alert("Response Sent", "Humne customer ko inform kar diya hai aur rating penalty apply kar di hai.");
-                            } else {
-                              Alert.alert("Error", resData.error || "Response send karne mein masla pesh aya.");
-                            }
-                          } catch (e: any) {
-                            Alert.alert("Error", e.message);
-                          }
-                        }
-                      }
-                    ],
-                    { cancelable: false }
-                  );
-                } else {
-                  Alert.alert("Wasila Notification", data.message);
-                }
-              }
-            }
-          });
-        }, (error) => {
-          console.error("Firestore notifications onSnapshot error:", error);
         });
 
       } else {
